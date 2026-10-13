@@ -518,6 +518,24 @@ mod tests {
     }
 
     #[test]
+    fn meta_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("recorder-meta-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let at = Local::now();
+        let dev = DeviceInfo {
+            name: "x".into(),
+            sample_rate: 48_000,
+            channels: 2,
+            sample_format: "F32".into(),
+        };
+        write_meta_file(&dir, &at, &(dev.clone(), dev), None).unwrap();
+        let meta = read_meta(&dir).unwrap();
+        assert_eq!(meta.started_at.timestamp(), at.timestamp());
+        assert_eq!(meta.duration_secs, None);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn level_meter_keeps_max_and_resets() {
         let m = LevelMeter::default();
         m.update(0.2);
@@ -542,4 +560,21 @@ mod tests {
         assert_eq!(reader.duration(), 32_000);
         fs::remove_file(&path).unwrap();
     }
+}
+
+/// The parts of `meta.json` needed to describe a finished recording.
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct SessionMeta {
+    pub started_at: DateTime<chrono::FixedOffset>,
+    /// `None` while recording (or if the app was killed before stopping).
+    pub duration_secs: Option<f64>,
+}
+
+/// Read `dir/meta.json`.
+pub fn read_meta(dir: &Path) -> Result<SessionMeta> {
+    let path = dir.join("meta.json");
+    let text = fs::read_to_string(&path)
+        .with_context(|| format!("{} を読み込めません", path.display()))?;
+    serde_json::from_str(&text)
+        .with_context(|| format!("{} の形式が正しくありません", path.display()))
 }

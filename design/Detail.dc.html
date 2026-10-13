@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>会議の詳細</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#2342A8}a:hover{color:#172E7A}
+</style>
+</helmet>
+<div style="min-height: 100vh; background: #F3F4F6; color: #15171C; font-family: 'IBM Plex Sans JP', sans-serif; box-sizing: border-box;">
+  <header style="background: #FFFFFF; border-bottom: 1px solid #DDE0E5;">
+    <div style="max-width: 1120px; margin: 0 auto; padding: 16px 24px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;">
+      <a href="Main.dc.html" style="display: flex; align-items: center; gap: 6px; min-height: 44px; font-size: 14px; text-decoration: none;">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3L5 8l5 5"></path></svg>
+        会議一覧
+      </a>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+        <button type="button" style="min-height: 40px; padding: 0 16px; border: 1px solid #C9CDD4; border-radius: 8px; background: #FFFFFF; color: #15171C; font-family: inherit; font-size: 13px; cursor: pointer;">全文をコピー</button>
+        <button type="button" style="min-height: 40px; padding: 0 16px; border: 1px solid #C9CDD4; border-radius: 8px; background: #FFFFFF; color: #15171C; font-family: inherit; font-size: 13px; cursor: pointer;">フォルダを開く</button>
+      </div>
+    </div>
+  </header>
+
+  <main style="max-width: 1120px; margin: 0 auto; padding: 32px 24px 48px; display: flex; flex-direction: column; gap: 28px;">
+    <div style="display: flex; flex-direction: column; gap: 6px;">
+      <h1 style="margin: 0; font-size: 26px; font-weight: 700;">週次定例</h1>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555B66;">2026-10-13 (火) 10:30–11:12 · 42分</div>
+    </div>
+
+    <div style="display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px;">
+
+      <section aria-label="要約" style="flex: 1 1 340px; min-width: 0; background: #FFFFFF; border: 1px solid #DDE0E5; border-radius: 12px; padding: 24px; display: flex; flex-direction: column; gap: 24px;">
+
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <h2 style="margin: 0; font-size: 14px; font-weight: 700; color: #15171C;">自分のTODO</h2>
+          <sc-for list="{{todos}}" as="t" hint-placeholder-count="3">
+            <div style="display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; border-radius: 8px; background: #F6F7F9;">
+              <div style="font-size: 14px; line-height: 1.6;">{{t.text}}</div>
+              <div style="display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span style="font-size: 12px; font-weight: 500; color: #9A3412;">期限 {{t.due}}</span>
+                <a href="{{t.href}}" style="font-family: 'IBM Plex Mono', monospace; font-size: 12px;">{{t.ts}}</a>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <h2 style="margin: 0; font-size: 14px; font-weight: 700; color: #15171C;">決定事項</h2>
+          <sc-for list="{{decisions}}" as="d" hint-placeholder-count="1">
+            <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px;">
+              <div style="font-size: 14px; line-height: 1.6;">{{d.text}}</div>
+              <a href="{{d.href}}" style="flex: 0 0 auto; font-family: 'IBM Plex Mono', monospace; font-size: 12px;">{{d.ts}}</a>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <h2 style="margin: 0; font-size: 14px; font-weight: 700; color: #15171C;">持ち越し</h2>
+          <sc-for list="{{pending}}" as="p" hint-placeholder-count="1">
+            <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px;">
+              <div style="font-size: 14px; line-height: 1.6;">{{p.text}}</div>
+              <a href="{{p.href}}" style="flex: 0 0 auto; font-family: 'IBM Plex Mono', monospace; font-size: 12px;">{{p.ts}}</a>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="font-size: 12px; line-height: 1.6; color: #555B66; border-top: 1px solid #ECEEF1; padding-top: 14px;">要約はローカルLLMが生成しています。時刻をクリックすると根拠の発言に移動します。</div>
+      </section>
+
+      <section aria-label="全文" style="flex: 999 1 560px; min-width: 0; background: #FFFFFF; border: 1px solid #DDE0E5; border-radius: 12px; padding: 8px 0;">
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 16px 24px 8px;">
+          <h2 style="margin: 0; font-size: 14px; font-weight: 700;">全文</h2>
+          <div style="display: flex; gap: 14px; font-size: 12px; color: #555B66;">
+            <span style="display: flex; align-items: center; gap: 6px;"><svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="4" fill="#15171C"></circle></svg>自分（マイク）</span>
+            <span style="display: flex; align-items: center; gap: 6px;"><svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="4" fill="#2342A8"></circle></svg>相手（システム音声）</span>
+          </div>
+        </div>
+        <sc-for list="{{lines}}" as="l" hint-placeholder-count="9">
+          <div id="{{l.id}}" style="display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 12px 24px; background: {{l.bg}};">
+            <div style="flex: 0 0 72px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #555B66; padding-top: 3px;">{{l.ts}}</div>
+            <div style="flex: 0 0 40px; font-size: 13px; font-weight: 700; color: {{l.color}}; padding-top: 1px;">{{l.who}}</div>
+            <div style="flex: 1 1 280px; min-width: 0; font-size: 15px; line-height: 1.7;">{{l.text}}</div>
+          </div>
+        </sc-for>
+      </section>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1240}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const ref = (ts) => ({ ts: ts, href: '#t-' + ts.replace(/:/g, '') });
+    const me = { who: '自分', color: '#15171C' };
+    const them = { who: '相手', color: '#2342A8' };
+    const raw = [
+      ['00:00:12', them, 'それでは始めます。今日は次回リリースの日程と、検証環境の件です。'],
+      ['00:01:05', me, '検証環境ですが、データ移行のスクリプトがまだ途中です。'],
+      ['00:01:40', them, '移行は今週中に終わりそうですか。'],
+      ['00:02:02', me, '木曜までには終わらせます。終わったら共有します。'],
+      ['00:05:31', them, 'リリースは予定どおり、来週水曜で進めましょう。'],
+      ['00:06:10', them, '告知文の確認を金曜までにお願いできますか。'],
+      ['00:06:18', me, 'はい、金曜の午前中に確認して返します。'],
+      ['00:09:44', them, '監視の設定は次回の定例で決めましょう。'],
+      ['00:10:02', me, '了解です。それまでに案を2つ用意しておきます。']
+    ];
+    const lines = raw.map((r, i) => ({
+      ts: r[0],
+      id: 't-' + r[0].replace(/:/g, ''),
+      who: r[1].who,
+      color: r[1].color,
+      text: r[2],
+      bg: i % 2 === 1 ? '#FAFAFB' : '#FFFFFF'
+    }));
+    return {
+      todos: [
+        { text: 'データ移行スクリプトを完了して共有する', due: '木曜', ...ref('00:02:02') },
+        { text: '告知文を確認して返信する', due: '金曜 午前', ...ref('00:06:18') },
+        { text: '監視設定の案を2つ用意する', due: '次回定例', ...ref('00:10:02') }
+      ],
+      decisions: [
+        { text: 'リリースは来週水曜で進める', ...ref('00:05:31') }
+      ],
+      pending: [
+        { text: '監視設定の方針は次回定例で決める', ...ref('00:09:44') }
+      ],
+      lines
+    };
+  }
+}
+</script>
+</body>
+</html>

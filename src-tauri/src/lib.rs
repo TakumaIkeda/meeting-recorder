@@ -1,15 +1,19 @@
-//! Tauri shell: exposes the GUI-independent `recorder` crate as commands and streams
-//! elapsed time / input levels to the frontend as events.
+//! Tauri shell: exposes the GUI-independent `recorder` / `transcriber` crates as commands and
+//! pushes recording progress and transcription status to the frontend as events.
 
-use std::path::PathBuf;
+mod jobs;
+
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use jobs::{JobStatus, Jobs, MeetingInfo};
 use recorder::{DefaultDevices, DeviceInfo, Recorder};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
+use transcriber::{Line, Transcript};
 
 const PROGRESS_EVENT: &str = "recording-progress";
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
@@ -29,7 +33,45 @@ impl Active {
 }
 
 #[derive(Default, Clone)]
-struct AppState(Arc<Mutex<Option<Active>>>);
+struct Recording(Arc<Mutex<Option<Active>>>);
+
+/// Folder layout under `<Documents>/MeetingRecorder`.
+#[derive(Clone, Serialize)]
+struct Paths {
+    /// `meetings/` — one folder per recording.
+    output_root: PathBuf,
+    /// `config.json` — whisper-cli / model settings.
+    config: PathBuf,
+    /// `models/` — default location for ggml models.
+    models: PathBuf,
+}
+
+impl Paths {
+    fn resolve(app: &AppHandle) -> Result<Self, String> {
+        let base = app
+            .path()
+            .document_dir()
+            .map_err(|e| format!("ドキュメントフォルダを取得できません: {e}"))?
+            .join("MeetingRecorder");
+        Ok(Self {
+            output_root: base.join("meetings"),
+            config: base.join("config.json"),
+            models: base.join("models"),
+        })
+    }
+
+    /// Only allow commands to touch meeting folders under `output_root`.
+    fn meeting_dir(&self, dir: &str) -> Result<PathBuf, String> {
+        let dir = Path::new(dir)
+            .canonicalize()
+            .map_err(|e| format!("フォルダが見つかりません: {dir} ({e})"))?;
+        let root = self.output_root.canonicalize().map_err(|e| e.to_string())?;
+        if dir.parent() != Some(root.as_path()) {
+            return Err("会議フォルダではありません".into());
+        }
+        Ok(dir)
+    }
+}
 
 #[derive(Clone, Serialize)]
 struct Progress {
@@ -47,27 +89,23 @@ struct StartedRecording {
 }
 
 #[derive(Serialize)]
-struct StoppedRecording {
-    dir: PathBuf,
-    duration_secs: f64,
+struct MeetingDetail {
+    info: MeetingInfo,
+    lines: Vec<Line>,
 }
 
-/// `<Documents>/MeetingRecorder/meetings`
-fn output_root(app: &AppHandle) -> Result<PathBuf, String> {
-    let docs = app
-        .path()
-        .document_dir()
-        .map_err(|e| format!("ドキュメントフォルダを取得できません: {e}"))?;
-    Ok(docs.join("MeetingRecorder").join("meetings"))
-}
-
-/// Run blocking audio work off the main thread.
+/// Run blocking work off the main thread.
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     tauri::async_runtime::spawn_blocking(f)
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn get_paths(paths: State<'_, Paths>) -> Paths {
+    paths.inner().clone()
 }
 
 #[tauri::command]
@@ -78,12 +116,13 @@ async fn get_devices() -> Result<DefaultDevices, String> {
 #[tauri::command]
 async fn start_recording(
     app: AppHandle,
-    state: State<'_, AppState>,
+    recording: State<'_, Recording>,
+    paths: State<'_, Paths>,
 ) -> Result<StartedRecording, String> {
-    let state = state.inner().clone();
-    let root = output_root(&app)?;
+    let recording = recording.inner().clone();
+    let root = paths.output_root.clone();
     blocking(move || {
-        let mut slot = state.0.lock().unwrap();
+        let mut slot = recording.0.lock().unwrap();
         if slot.is_some() {
             return Err("すでに録音中です".into());
         }
@@ -122,36 +161,123 @@ async fn start_recording(
     .await
 }
 
+/// Stop recording and queue the folder for transcription.
 #[tauri::command]
-async fn stop_recording(state: State<'_, AppState>) -> Result<StoppedRecording, String> {
-    let state = state.inner().clone();
+async fn stop_recording(
+    app: AppHandle,
+    recording: State<'_, Recording>,
+    jobs: State<'_, Jobs>,
+) -> Result<MeetingInfo, String> {
+    let recording = recording.inner().clone();
+    let jobs = jobs.inner().clone();
     blocking(move || {
-        let active = state.0.lock().unwrap().take().ok_or("録音していません")?;
+        let active = recording
+            .0
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or("録音していません")?;
         let summary = active.stop().map_err(|e| format!("{e:#}"))?;
-        Ok(StoppedRecording {
-            dir: summary.dir,
-            duration_secs: summary.duration_secs,
+        jobs.enqueue(&app, &summary.dir)
+    })
+    .await
+}
+
+#[tauri::command]
+fn retry_transcription(
+    app: AppHandle,
+    dir: String,
+    jobs: State<'_, Jobs>,
+    paths: State<'_, Paths>,
+) -> Result<MeetingInfo, String> {
+    let dir = paths.meeting_dir(&dir)?;
+    jobs.enqueue(&app, &dir)
+}
+
+#[tauri::command]
+fn list_meetings(jobs: State<'_, Jobs>) -> Vec<MeetingInfo> {
+    jobs.list()
+}
+
+#[tauri::command]
+async fn get_meeting(
+    dir: String,
+    jobs: State<'_, Jobs>,
+    paths: State<'_, Paths>,
+) -> Result<MeetingDetail, String> {
+    let dir = paths.meeting_dir(&dir)?;
+    let jobs = jobs.inner().clone();
+    blocking(move || {
+        let transcript = Transcript::load(&dir).map_err(|e| format!("{e:#}"))?;
+        let info = match jobs.get(&dir) {
+            Some(info) => info,
+            None => {
+                let meta = recorder::read_meta(&dir).map_err(|e| format!("{e:#}"))?;
+                MeetingInfo {
+                    dir: dir.clone(),
+                    started_at: meta.started_at.to_rfc3339(),
+                    duration_secs: meta.duration_secs,
+                    status: JobStatus::Done,
+                }
+            }
+        };
+        Ok(MeetingDetail {
+            info,
+            lines: transcript.lines,
         })
     })
     .await
 }
 
+#[tauri::command]
+fn open_folder(dir: String, paths: State<'_, Paths>) -> Result<(), String> {
+    let dir = paths.meeting_dir(&dir)?;
+    let program = if cfg!(windows) {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program)
+        .arg(&dir)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("フォルダを開けません: {e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(AppState::default())
+        .manage(Recording::default())
+        .setup(|app| {
+            let paths = Paths::resolve(app.handle())?;
+            let jobs = Jobs::start(
+                app.handle().clone(),
+                paths.config.clone(),
+                paths.models.clone(),
+            );
+            app.manage(paths);
+            app.manage(jobs);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
+            get_paths,
             get_devices,
             start_recording,
-            stop_recording
+            stop_recording,
+            retry_transcription,
+            list_meetings,
+            get_meeting,
+            open_folder,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
             // Finalize the WAV files if the window is closed while recording.
             if let RunEvent::Exit = event {
-                let state = app.state::<AppState>();
-                let active = state.0.lock().unwrap().take();
+                let recording = app.state::<Recording>();
+                let active = recording.0.lock().unwrap().take();
                 if let Some(active) = active {
                     if let Err(e) = active.stop() {
                         eprintln!("録音の終了処理に失敗しました: {e:#}");

@@ -1,0 +1,86 @@
+//! End-to-end run of `transcribe_meeting` against a stand-in `whisper-cli` shell script.
+#![cfg(unix)]
+
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+
+use transcriber::{transcribe_meeting, Speaker, WhisperConfig};
+
+fn write_wav(path: &Path, amplitude: i16) {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 16_000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut w = hound::WavWriter::create(path, spec).unwrap();
+    for i in 0..16_000 {
+        w.write_sample(if i % 2 == 0 { amplitude } else { -amplitude })
+            .unwrap();
+    }
+    w.finalize().unwrap();
+}
+
+const FAKE: &str = r#"#!/bin/sh
+# Find the -of argument and emit whisper.cpp-style progress + JSON.
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-of" ]; then out="$2"; fi
+  shift
+done
+echo "whisper_init_from_file: loading model" >&2
+echo "whisper_print_progress_callback: progress =  50%" >&2
+cat > "$out.json" <<JSON
+{"transcription": [
+  {"offsets": {"from": 1000, "to": 2000}, "text": " $out の発言"},
+  {"offsets": {"from": 5000, "to": 6000}, "text": "[BLANK_AUDIO]"}
+]}
+JSON
+"#;
+
+#[test]
+fn transcribes_both_tracks_and_skips_silent_ones() {
+    let root = std::env::temp_dir().join(format!("fake-whisper-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let dir = root.join("2026-10-13_1030");
+    fs::create_dir_all(&dir).unwrap();
+    let cli = root.join("whisper-cli");
+    fs::write(&cli, FAKE).unwrap();
+    fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
+    let model = root.join("model.bin");
+    fs::write(&model, b"").unwrap();
+    let config = WhisperConfig {
+        whisper_cli: cli.clone(),
+        model: model.clone(),
+        ..WhisperConfig::default()
+    };
+
+    write_wav(&dir.join("mic.wav"), 3000);
+    write_wav(&dir.join("system.wav"), 3000);
+    let mut progress = Vec::new();
+    let t = transcribe_meeting(&dir, &config, &mut |p| progress.push(p)).unwrap();
+    assert_eq!(t.lines.len(), 2);
+    assert_eq!(t.lines[0].speaker, Speaker::Me);
+    assert_eq!(t.lines[0].text, "mic の発言");
+    assert_eq!(t.lines[1].speaker, Speaker::Them);
+    assert!(progress.contains(&25) && progress.contains(&75) && progress.last() == Some(&100));
+    assert!(dir.join("transcript.json").is_file());
+
+    // A silent system track is not sent to whisper at all.
+    write_wav(&dir.join("system.wav"), 0);
+    let t = transcribe_meeting(&dir, &config, &mut |_| {}).unwrap();
+    assert_eq!(t.lines.len(), 1);
+
+    // Missing whisper-cli gives an actionable error.
+    let bad = WhisperConfig {
+        whisper_cli: root.join("nope"),
+        ..config
+    };
+    let err = format!(
+        "{:#}",
+        transcribe_meeting(&dir, &bad, &mut |_| {}).unwrap_err()
+    );
+    assert!(err.contains("whisper-cli が見つかりません"), "{err}");
+
+    fs::remove_dir_all(&root).unwrap();
+}

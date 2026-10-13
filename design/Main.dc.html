@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>録音と会議一覧</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#2342A8}a:hover{color:#172E7A}
+</style>
+</helmet>
+<div style="min-height: 100vh; background: #F3F4F6; color: #15171C; font-family: 'IBM Plex Sans JP', sans-serif; box-sizing: border-box;">
+  <header style="background: #FFFFFF; border-bottom: 1px solid #DDE0E5;">
+    <div style="max-width: 1120px; margin: 0 auto; padding: 16px 24px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;">
+      <div style="display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;">
+        <div style="font-size: 18px; font-weight: 700; letter-spacing: 0.02em;">会議ログ</div>
+        <div style="font-size: 13px; color: #555B66;">ローカル処理・外部送信なし</div>
+      </div>
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555B66;">保存先 meetings/</div>
+    </div>
+  </header>
+
+  <main style="max-width: 1120px; margin: 0 auto; padding: 32px 24px 48px; display: flex; flex-direction: column; gap: 32px;">
+
+    <section aria-label="録音" style="background: #FFFFFF; border: 1px solid #DDE0E5; border-radius: 12px; padding: 28px; display: flex; flex-wrap: wrap; align-items: center; gap: 32px;">
+      <div style="flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; min-width: 220px;">
+        <sc-if value="{{recording}}" hint-placeholder-val="{{ false }}">
+          <div style="display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; color: #B42318;">
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="5" fill="#B42318"></circle></svg>
+            録音中
+          </div>
+        </sc-if>
+        <sc-if value="{{idle}}" hint-placeholder-val="{{ true }}">
+          <div style="display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; color: #555B66;">
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="4" fill="none" stroke="#555B66" stroke-width="2"></circle></svg>
+            待機中
+          </div>
+        </sc-if>
+        <div style="font-family: 'IBM Plex Mono', monospace; font-size: 44px; font-weight: 500; letter-spacing: 0.02em; line-height: 1.1;">{{elapsed}}</div>
+      </div>
+
+      <div style="flex: 1 1 320px; display: flex; flex-direction: column; gap: 14px; min-width: 0;">
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+          <div style="width: 96px; font-size: 13px; color: #555B66;">マイク</div>
+          <div style="flex: 1 1 160px; font-size: 14px;">既定の入力デバイス</div>
+          <div aria-hidden="true" style="display: flex; gap: 3px; align-items: flex-end; height: 18px;">
+            <sc-for list="{{micBars}}" as="b" hint-placeholder-count="12">
+              <div style="width: 4px; height: {{b.h}}; background: {{b.c}}; border-radius: 1px;"></div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+          <div style="width: 96px; font-size: 13px; color: #555B66;">システム音声</div>
+          <div style="flex: 1 1 160px; font-size: 14px;">既定の出力デバイス（ループバック）</div>
+          <div aria-hidden="true" style="display: flex; gap: 3px; align-items: flex-end; height: 18px;">
+            <sc-for list="{{sysBars}}" as="b" hint-placeholder-count="12">
+              <div style="width: 4px; height: {{b.h}}; background: {{b.c}}; border-radius: 1px;"></div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+
+      <div style="flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; margin-left: auto;">
+        <sc-if value="{{idle}}" hint-placeholder-val="{{ true }}">
+          <button type="button" onClick="{{toggle}}" style="min-height: 52px; padding: 0 28px; border: none; border-radius: 26px; background: #15171C; color: #FFFFFF; font-family: inherit; font-size: 16px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 10px;">
+            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><circle cx="7" cy="7" r="6" fill="#F97066"></circle></svg>
+            録音開始
+          </button>
+        </sc-if>
+        <sc-if value="{{recording}}" hint-placeholder-val="{{ false }}">
+          <button type="button" onClick="{{toggle}}" style="min-height: 52px; padding: 0 28px; border: none; border-radius: 26px; background: #B42318; color: #FFFFFF; font-family: inherit; font-size: 16px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 10px;">
+            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="2" fill="#FFFFFF"></rect></svg>
+            停止して処理
+          </button>
+        </sc-if>
+        <div style="font-size: 12px; color: #555B66;">停止後、文字起こし → 要約を自動で実行</div>
+      </div>
+    </section>
+
+    <section aria-label="会議一覧" style="display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
+        <h2 style="margin: 0; font-size: 16px; font-weight: 700;">会議</h2>
+        <div style="font-size: 13px; color: #555B66;">新しい順</div>
+      </div>
+      <div style="background: #FFFFFF; border: 1px solid #DDE0E5; border-radius: 12px; overflow: hidden;">
+        <sc-for list="{{meetings}}" as="m" hint-placeholder-count="5">
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; padding: 16px 24px; border-top: {{m.border}};">
+            <div style="flex: 0 0 132px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555B66;">{{m.date}} {{m.time}}</div>
+            <div style="flex: 1 1 240px; min-width: 0; font-size: 15px; font-weight: 500;">
+              <sc-if value="{{m.done}}" hint-placeholder-val="{{ true }}">
+                <a href="Detail.dc.html" style="text-decoration: none;">{{m.title}}</a>
+              </sc-if>
+              <sc-if value="{{m.notDone}}" hint-placeholder-val="{{ false }}">
+                <span>{{m.title}}</span>
+              </sc-if>
+            </div>
+            <div style="flex: 0 0 56px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #555B66; text-align: right;">{{m.dur}}</div>
+            <div style="flex: 0 0 180px; display: flex; justify-content: flex-end; align-items: center; gap: 10px;">
+              <sc-if value="{{m.done}}" hint-placeholder-val="{{ true }}">
+                <span style="font-size: 12px; font-weight: 500; padding: 3px 10px; border-radius: 999px; background: #E3F1E8; color: #1D5E3A;">完了</span>
+              </sc-if>
+              <sc-if value="{{m.processing}}" hint-placeholder-val="{{ false }}">
+                <span style="font-size: 12px; font-weight: 500; padding: 3px 10px; border-radius: 999px; background: #E7ECFA; color: #1F3A94;">{{m.statusText}}</span>
+              </sc-if>
+              <sc-if value="{{m.failed}}" hint-placeholder-val="{{ false }}">
+                <span style="font-size: 12px; font-weight: 500; padding: 3px 10px; border-radius: 999px; background: #FBEAE8; color: #9A1C12;">失敗</span>
+                <button type="button" style="min-height: 32px; padding: 0 12px; border: 1px solid #C9CDD4; border-radius: 6px; background: #FFFFFF; color: #15171C; font-family: inherit; font-size: 12px; cursor: pointer;">再実行</button>
+              </sc-if>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":860}}'>
+class Component extends DCLogic {
+  componentDidMount() {
+    this.timer = setInterval(() => {
+      const s = this.state || {};
+      if (s.recording) this.setState({ sec: (s.sec || 0) + 1 });
+    }, 1000);
+  }
+  componentWillUnmount() {
+    clearInterval(this.timer);
+  }
+  renderVals() {
+    const s = this.state || {};
+    const recording = !!s.recording;
+    const sec = s.sec || 0;
+    const pad = (n) => String(n).padStart(2, '0');
+    const elapsed = pad(Math.floor(sec / 3600)) + ':' + pad(Math.floor(sec / 60) % 60) + ':' + pad(sec % 60);
+    const bars = (seed) => Array.from({ length: 12 }, (_, i) => {
+      const lvl = recording ? (Math.sin(sec * 1.7 + i * seed) + 1) / 2 : 0;
+      const on = lvl > i / 12;
+      return { h: (4 + i) + 'px', c: on ? '#1F6F43' : '#DDE0E5' };
+    });
+    const raw = [
+      { date: '10/14', time: '10:30', title: '設計レビュー', dur: '—', status: 'processing', statusText: '文字起こし中' },
+      { date: '10/13', time: '10:30', title: '週次定例', dur: '42分', status: 'done' },
+      { date: '10/10', time: '15:00', title: '1on1', dur: '28分', status: 'done' },
+      { date: '10/09', time: '13:00', title: '仕様すり合わせ', dur: '55分', status: 'failed' },
+      { date: '10/07', time: '10:30', title: '週次定例', dur: '39分', status: 'done' }
+    ];
+    const meetings = raw.map((m, i) => ({
+      ...m,
+      done: m.status === 'done',
+      notDone: m.status !== 'done',
+      processing: m.status === 'processing',
+      failed: m.status === 'failed',
+      border: i === 0 ? 'none' : '1px solid #ECEEF1'
+    }));
+    return {
+      recording,
+      idle: !recording,
+      elapsed,
+      micBars: bars(0.9),
+      sysBars: bars(0.5),
+      meetings,
+      toggle: () => this.setState({ recording: !recording, sec: recording ? 0 : sec })
+    };
+  }
+}
+</script>
+</body>
+</html>

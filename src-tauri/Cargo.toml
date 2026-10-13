@@ -16,3 +16,4 @@ tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 anyhow = "1"
 recorder = { path = "../crates/recorder" }
+transcriber = { path = "../crates/transcriber" }

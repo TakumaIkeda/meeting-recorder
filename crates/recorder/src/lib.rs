@@ -12,4 +12,6 @@ pub mod timeline;
 pub use devices::{
     default_devices, list_all_devices, DefaultDevices, DeviceEntry, DeviceInfo, SourceKind,
 };
-pub use recorder::{Meters, Recorder, RecordingSummary, TrackSummary, OUTPUT_SAMPLE_RATE};
+pub use recorder::{
+    read_meta, Meters, Recorder, RecordingSummary, SessionMeta, TrackSummary, OUTPUT_SAMPLE_RATE,
+};
