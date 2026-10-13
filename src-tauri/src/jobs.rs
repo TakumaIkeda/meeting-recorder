@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -27,12 +28,17 @@ pub struct MeetingInfo {
     pub started_at: String,
     pub duration_secs: Option<f64>,
     pub status: JobStatus,
+    /// Increases with every status change. Command results and events can reach the UI out of
+    /// order (the worker may already be running when `stop_recording` returns), so the UI keeps
+    /// whichever copy has the highest `seq`.
+    pub seq: u64,
 }
 
 #[derive(Clone)]
 pub struct Jobs {
     meetings: Arc<Mutex<HashMap<PathBuf, MeetingInfo>>>,
     queue: Sender<PathBuf>,
+    seq: Arc<AtomicU64>,
 }
 
 impl Jobs {
@@ -40,15 +46,19 @@ impl Jobs {
     pub fn start(app: AppHandle, config_path: PathBuf, model_dir: PathBuf) -> Self {
         let (queue, rx) = mpsc::channel::<PathBuf>();
         let meetings: Arc<Mutex<HashMap<PathBuf, MeetingInfo>>> = Arc::default();
-        let jobs = Self { meetings, queue };
+        let jobs = Self {
+            meetings,
+            queue,
+            seq: Arc::default(),
+        };
         let worker = jobs.clone();
         thread::Builder::new()
             .name("transcriber".into())
             .spawn(move || {
                 for dir in rx {
                     worker.set_status(&app, &dir, JobStatus::Transcribing { progress: 0 });
-                    let result = WhisperConfig::load_or_create(&config_path, &model_dir).and_then(
-                        |config| {
+                    let run = || {
+                        WhisperConfig::load_or_create(&config_path, &model_dir).and_then(|config| {
                             let mut last = 0;
                             transcriber::transcribe_meeting(&dir, &config, &mut |p| {
                                 if p != last {
@@ -60,8 +70,13 @@ impl Jobs {
                                     );
                                 }
                             })
-                        },
-                    );
+                        })
+                    };
+                    // A panic must not kill the worker, or every later job would stay queued.
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run))
+                        .unwrap_or_else(|_| {
+                            Err(anyhow::anyhow!("文字起こし処理が異常終了しました"))
+                        });
                     let status = match result {
                         Ok(_) => JobStatus::Done,
                         Err(e) => JobStatus::Failed {
@@ -90,6 +105,7 @@ impl Jobs {
                 started_at: meta.started_at.to_rfc3339(),
                 duration_secs: meta.duration_secs,
                 status: JobStatus::Queued,
+                seq: self.next_seq(),
             };
             meetings.insert(dir.to_path_buf(), info.clone());
             info
@@ -108,9 +124,14 @@ impl Jobs {
                 return;
             };
             m.status = status;
+            m.seq = self.next_seq();
             m.clone()
         };
         let _ = app.emit(STATUS_EVENT, &info);
+    }
+
+    fn next_seq(&self) -> u64 {
+        self.seq.fetch_add(1, Ordering::Relaxed) + 1
     }
 
     pub fn get(&self, dir: &Path) -> Option<MeetingInfo> {

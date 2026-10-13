@@ -108,6 +108,9 @@ export default function MainView({ onOpen }: { onOpen: (dir: string) => void }) 
 
   const upsertMeeting = useCallback((m: MeetingInfo) => {
     setMeetings((list) => {
+      // Events and command results can arrive out of order; never go back to an older status.
+      const current = list.find((x) => x.dir === m.dir);
+      if (current && current.seq > m.seq) return list;
       const rest = list.filter((x) => x.dir !== m.dir);
       return [m, ...rest].sort((a, b) => b.started_at.localeCompare(a.started_at));
     });

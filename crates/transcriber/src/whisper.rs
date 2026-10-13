@@ -1,6 +1,6 @@
 //! Running `whisper-cli` on one track and parsing its JSON output (`-oj`).
 
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
@@ -21,7 +21,8 @@ pub struct Segment {
 /// phrases like 「ご視聴ありがとうございました」 on silence, so such tracks are skipped.
 const SILENCE_PEAK: i16 = 100;
 
-/// Transcribe `dir/<name>.wav`; writes whisper's raw output to `dir/<name>.json`.
+/// Transcribe `dir/<name>.wav`; writes whisper's raw output to `dir/<name>.json` and its
+/// console output to `dir/whisper-<name>.log`.
 pub fn transcribe_track(
     dir: &Path,
     name: &str,
@@ -72,11 +73,15 @@ pub fn transcribe_track(
         }
     })?;
 
-    // Keep the tail of stderr for error reporting, and parse progress lines as they arrive.
+    // Log everything, keep the tail of stderr for error reporting, and parse progress lines.
+    let log_path = dir.join(format!("whisper-{name}.log"));
+    let mut log = std::fs::File::create(&log_path)
+        .with_context(|| format!("{} を作成できません", log_path.display()))?;
     let mut tail: Vec<String> = Vec::new();
     if let Some(stderr) = child.stderr.take() {
         for line in BufReader::new(stderr).split(b'\n') {
             let line = String::from_utf8_lossy(&line?).trim_end().to_string();
+            let _ = writeln!(log, "{line}");
             if let Some(p) = parse_progress(&line) {
                 progress(p);
             } else if !line.is_empty() {

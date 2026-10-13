@@ -218,6 +218,7 @@ async fn get_meeting(
                     started_at: meta.started_at.to_rfc3339(),
                     duration_secs: meta.duration_secs,
                     status: JobStatus::Done,
+                    seq: 0,
                 }
             }
         };

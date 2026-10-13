@@ -33,6 +33,7 @@ design/            画面デザインの元データ（デザインツール独�
   system.wav   既定の出力デバイス（WASAPI ループバック）
   meta.json    開始時刻(RFC3339)・デバイス・ネイティブ形式・補完した無音秒数
   mic.json / system.json   whisper-cli の生出力
+  whisper-mic.log / whisper-system.log   whisper-cli のコンソール出力（進捗・エラーの確認用）
   transcript.json          統合済みの全文 {lines: [{start_ms, end_ms, speaker: "me"|"them", text}]}
 ```
 

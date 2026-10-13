@@ -38,6 +38,8 @@ export interface MeetingInfo {
   started_at: string;
   duration_secs: number | null;
   status: JobStatus;
+  /** Increases with every status change; keep the copy with the highest value. */
+  seq: number;
 }
 
 export interface TranscriptLine {
