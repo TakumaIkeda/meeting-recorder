@@ -11,7 +11,10 @@ fn main() -> anyhow::Result<()> {
     let usage = "usage: transcribe <会議フォルダ> <モデル.bin> [whisper-cli]";
     let dir = PathBuf::from(args.next().ok_or_else(|| anyhow::anyhow!(usage))?);
     let model = PathBuf::from(args.next().ok_or_else(|| anyhow::anyhow!(usage))?);
-    let mut config = WhisperConfig { model, ..WhisperConfig::default() };
+    let mut config = WhisperConfig {
+        model,
+        ..WhisperConfig::default()
+    };
     if let Some(cli) = args.next() {
         config.whisper_cli = cli.into();
     }
@@ -24,7 +27,13 @@ fn main() -> anyhow::Result<()> {
             Speaker::Me => "自分",
             Speaker::Them => "相手",
         };
-        println!("[{:02}:{:02}:{:02}] {who}: {}", s / 3600, s / 60 % 60, s % 60, l.text);
+        println!(
+            "[{:02}:{:02}:{:02}] {who}: {}",
+            s / 3600,
+            s / 60 % 60,
+            s % 60,
+            l.text
+        );
     }
     println!("→ {}", dir.join("transcript.json").display());
     Ok(())

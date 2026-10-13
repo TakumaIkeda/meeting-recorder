@@ -50,13 +50,14 @@ fn main() -> anyhow::Result<()> {
     for t in [&summary.mic, &summary.system] {
         let reader = hound::WavReader::open(&t.path)?;
         println!(
-            "  {} : {:.2} 秒 ({} Hz, {} ch, {} bit) 無音補完 {:.2} 秒",
+            "  {} : {:.2} 秒 ({} Hz, {} ch, {} bit) 無音補完 {:.2} 秒 / 不連続 {} 回",
             t.path.display(),
             reader.duration() as f64 / reader.spec().sample_rate as f64,
             reader.spec().sample_rate,
             reader.spec().channels,
             reader.spec().bits_per_sample,
-            t.inserted_silence_secs
+            t.inserted_silence_secs,
+            t.discontinuities
         );
     }
     Ok(())

@@ -3,7 +3,7 @@
 use std::fs::{self, File};
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -68,6 +68,9 @@ pub struct TrackSummary {
     pub device: DeviceInfo,
     /// Seconds of silence inserted where the device delivered no data.
     pub inserted_silence_secs: f64,
+    /// Data discontinuities reported by WASAPI (`ErrorKind::Xrun`). With loopback these happen
+    /// routinely when playback starts or stops; the timeline realigns on the next block.
+    pub discontinuities: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -94,6 +97,7 @@ struct Source {
     tx: Sender<Msg>,
     start_tx: Option<Sender<StreamInstant>>,
     writer: JoinHandle<Result<f64>>,
+    discontinuities: Arc<AtomicU64>,
 }
 
 /// An active recording. Dropping it without calling [`Recorder::stop`] discards nothing that was
@@ -258,8 +262,16 @@ impl Source {
             SourceKind::System => "システム音声",
         };
         let err_label = format!("{label}「{name}」");
+        let discontinuities = Arc::new(AtomicU64::new(0));
+        let xruns = discontinuities.clone();
         let on_error = move |e: cpal::Error| {
-            errors.lock().unwrap().push(format!("{err_label}: {e}"));
+            // Discontinuities are not failures: blocks carry capture timestamps, so the timeline
+            // fills any lost span with silence and later audio stays aligned. Only count them.
+            if e.kind() == cpal::ErrorKind::Xrun {
+                xruns.fetch_add(1, Ordering::Relaxed);
+            } else {
+                errors.lock().unwrap().push(format!("{err_label}: {e}"));
+            }
         };
         let stream = match supported.sample_format() {
             SampleFormat::F32 => build::<f32>(&device, config, tx.clone(), meter, on_error),
@@ -281,6 +293,7 @@ impl Source {
             tx,
             start_tx: Some(start_tx),
             writer,
+            discontinuities,
         })
     }
 
@@ -313,6 +326,7 @@ impl Source {
             stream,
             tx,
             writer,
+            discontinuities,
             ..
         } = self;
         let end = stream.now();
@@ -330,6 +344,7 @@ impl Source {
             path: dir.join(kind.file_name()),
             device,
             inserted_silence_secs: inserted,
+            discontinuities: discontinuities.load(Ordering::Relaxed),
         })
     }
 }
@@ -489,11 +504,13 @@ fn write_meta_file(
                 "file": SourceKind::Mic.file_name(),
                 "device": devices.0,
                 "inserted_silence_secs": summary.map(|s| s.mic.inserted_silence_secs),
+                "discontinuities": summary.map(|s| s.mic.discontinuities),
             },
             "system": {
                 "file": SourceKind::System.file_name(),
                 "device": devices.1,
                 "inserted_silence_secs": summary.map(|s| s.system.inserted_silence_secs),
+                "discontinuities": summary.map(|s| s.system.discontinuities),
             },
         },
     });
