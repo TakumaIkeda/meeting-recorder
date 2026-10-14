@@ -131,7 +131,13 @@ pub fn download_from(
             .provider(ureq::tls::TlsProvider::NativeTls)
             .root_certs(ureq::tls::RootCerts::PlatformVerifier)
             .build();
-        let agent: ureq::Agent = ureq::Agent::config_builder().tls_config(tls).build().into();
+        // Bound the waits before data flows; the body itself may legitimately take a long time.
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .tls_config(tls)
+            .timeout_connect(Some(std::time::Duration::from_secs(30)))
+            .timeout_recv_response(Some(std::time::Duration::from_secs(60)))
+            .build()
+            .into();
         let response = agent
             .get(url)
             .call()
@@ -247,6 +253,32 @@ mod tests {
         assert_eq!(last, (1_000_000, Some(1_000_000)));
         assert!(!dest.with_extension("bin.part").exists());
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn https_errors_instead_of_panicking() {
+        // Regression: with the wrong ureq TLS feature every https:// request panicked once the
+        // TCP connection was up, which left the UI stuck at 0 MB. A listener that accepts and
+        // hangs up makes the TLS layer run, and the handshake must then fail with an error.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                drop(stream);
+            }
+        });
+        let dir = tmp("https");
+        let result = std::panic::catch_unwind(|| {
+            download_from(
+                &format!("https://{addr}/model.bin"),
+                Checksum::Sha1("x"),
+                &dir.join("m.bin"),
+                &mut |_, _| {},
+                &AtomicBool::new(false),
+            )
+        });
+        assert!(result.expect("download_from panicked").is_err());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

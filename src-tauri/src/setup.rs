@@ -159,18 +159,22 @@ fn run_download(app: AppHandle, downloads: &Downloads, id: &str, job: Job) -> Re
         .name("download".into())
         .spawn(move || {
             let mut last_emit = Instant::now() - Duration::from_secs(1);
-            let result = job(
-                &mut |done, total| {
-                    if last_emit.elapsed() >= Duration::from_millis(200) {
-                        last_emit = Instant::now();
-                        update(&app, &|s| {
-                            s.downloaded = done;
-                            s.total = total;
-                        });
-                    }
-                },
-                &cancel,
-            );
+            // A panic must not leave the UI stuck in "running" with nothing left to cancel.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                job(
+                    &mut |done, total| {
+                        if last_emit.elapsed() >= Duration::from_millis(200) {
+                            last_emit = Instant::now();
+                            update(&app, &|s| {
+                                s.downloaded = done;
+                                s.total = total;
+                            });
+                        }
+                    },
+                    &cancel,
+                )
+            }))
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("ダウンロード処理が異常終了しました")));
             let phase = match result {
                 Ok(true) => DownloadPhase::Done,
                 Ok(false) => DownloadPhase::Cancelled,
