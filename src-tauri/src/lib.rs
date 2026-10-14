@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use jobs::{JobStatus, Jobs, MeetingInfo};
+use jobs::{Jobs, MeetingInfo};
 use recorder::{DefaultDevices, DeviceInfo, Recorder};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
@@ -80,16 +80,18 @@ impl Paths {
         }
     }
 
-    /// Only allow commands to touch meeting folders under `output_root`.
+    /// Only allow commands to touch meeting folders under `output_root`. Returns the path as
+    /// `output_root/<name>` (not canonicalized, which on Windows would add a `\\?\` prefix), so
+    /// it matches the paths used by the recorder and the meetings list.
     fn meeting_dir(&self, dir: &str) -> Result<PathBuf, String> {
-        let dir = Path::new(dir)
+        let canonical = Path::new(dir)
             .canonicalize()
             .map_err(|e| format!("フォルダが見つかりません: {dir} ({e})"))?;
         let root = self.output_root.canonicalize().map_err(|e| e.to_string())?;
-        if dir.parent() != Some(root.as_path()) {
-            return Err("会議フォルダではありません".into());
+        match (canonical.parent(), canonical.file_name()) {
+            (Some(parent), Some(name)) if parent == root => Ok(self.output_root.join(name)),
+            _ => Err("会議フォルダではありません".into()),
         }
-        Ok(dir)
     }
 }
 
@@ -214,9 +216,22 @@ fn retry_transcription(
     jobs.enqueue(&app, &dir)
 }
 
+/// All meetings in the meetings folder, newest first (excluding one being recorded).
 #[tauri::command]
-fn list_meetings(jobs: State<'_, Jobs>) -> Vec<MeetingInfo> {
-    jobs.list()
+async fn list_meetings(
+    jobs: State<'_, Jobs>,
+    paths: State<'_, Paths>,
+    recording: State<'_, Recording>,
+) -> Result<Vec<MeetingInfo>, String> {
+    let jobs = jobs.inner().clone();
+    let root = paths.output_root.clone();
+    let active = recording
+        .0
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|a| a.recorder.dir().to_path_buf());
+    blocking(move || Ok(jobs.list(&root, active.as_deref()))).await
 }
 
 #[tauri::command]
@@ -229,19 +244,7 @@ async fn get_meeting(
     let jobs = jobs.inner().clone();
     blocking(move || {
         let transcript = Transcript::load(&dir).map_err(|e| format!("{e:#}"))?;
-        let info = match jobs.get(&dir) {
-            Some(info) => info,
-            None => {
-                let meta = recorder::read_meta(&dir).map_err(|e| format!("{e:#}"))?;
-                MeetingInfo {
-                    dir: dir.clone(),
-                    started_at: meta.started_at.to_rfc3339(),
-                    duration_secs: meta.duration_secs,
-                    status: JobStatus::Done,
-                    seq: 0,
-                }
-            }
-        };
+        let info = jobs.get(&dir)?;
         Ok(MeetingDetail {
             info,
             lines: transcript.lines,

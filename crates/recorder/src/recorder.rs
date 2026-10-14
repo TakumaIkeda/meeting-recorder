@@ -595,3 +595,10 @@ pub fn read_meta(dir: &Path) -> Result<SessionMeta> {
     serde_json::from_str(&text)
         .with_context(|| format!("{} の形式が正しくありません", path.display()))
 }
+
+/// Length of a WAV file in seconds (from its header), e.g. to recover the duration of a
+/// recording whose app was killed before `meta.json` got its final duration.
+pub fn wav_duration_secs(path: &Path) -> Option<f64> {
+    let reader = hound::WavReader::open(path).ok()?;
+    Some(reader.duration() as f64 / reader.spec().sample_rate as f64)
+}

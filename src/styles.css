@@ -577,3 +577,13 @@ button {
   align-items: center;
   gap: 8px;
 }
+
+.chip-pending {
+  background: #eceef1;
+  color: var(--muted);
+}
+.meeting-empty {
+  padding: 24px;
+  font-size: 14px;
+  color: var(--muted);
+}

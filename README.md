@@ -39,6 +39,7 @@ design/            画面デザインの元データ（デザインツール独�
   mic.json / system.json   whisper-cli の生出力
   whisper-mic.log / whisper-system.log   whisper-cli のコンソール出力（進捗・エラーの確認用）
   transcript.json          統合済みの全文 {lines: [{start_ms, end_ms, speaker: "me"|"them", text}]}
+  transcription-error.txt  直近の文字起こしが失敗した場合のエラー内容（成功すると消える）
 ```
 
 - WAV は 16 kHz / モノラル / 16 bit PCM（whisper.cpp にそのまま渡せる）。
@@ -58,6 +59,10 @@ design/            画面デザインの元データ（デザインツール独�
 「自分（マイク）」「相手（システム音声）」の発言として統合する。
 
 - 状態：`文字起こし待ち` → `文字起こし中 n%` → `完了`。失敗時はエラー内容と「再実行」ボタンを表示。
+- メイン画面の「会議」一覧は meetings フォルダから作る（再起動後も過去の会議が出る）。各会議の状態はフォルダの中身で決まる：
+  `transcript.json` があれば `完了`、`transcription-error.txt` があれば `失敗`、どちらもなければ `未処理`（「文字起こし」ボタンで実行）。
+- 詳細画面の「文字起こしをやり直す」で再実行できる（GPU 版を入れた後やモデルを変えた後など）。新しい結果ができるまで今の全文は残る。
+- 録音中にアプリが落ちた会議も一覧に出る（長さは WAV のヘッダーから求める）。
 - 完全に無音のトラック（ピーク約 -50 dBFS 未満）は whisper にかけない（無音で「ご視聴ありがとうございました」等が出るのを防ぐ）。
 - `[BLANK_AUDIO]`・`（拍手）` のような括弧だけのセグメントは除外。同じ話者の 1.5 秒以内の連続セグメントは 1 行にまとめる。
 
@@ -184,8 +189,8 @@ whisper-cli は同梱済みなので、初回起動時に画面からモデル�
 | command | `get_devices` | 既定マイク / 既定出力の名前・ネイティブ形式 |
 | command | `start_recording` | 録音開始。保存先フォルダとデバイスを返す |
 | command | `stop_recording` | 停止・ファイル確定し、文字起こしキューに追加。会議情報を返す |
-| command | `retry_transcription` | 失敗した会議の文字起こしを再実行 |
-| command | `list_meetings` | この起動中に録音した会議と状態 |
+| command | `retry_transcription` | 会議の文字起こしを実行 / 再実行（未処理・失敗・完了のどれでも） |
+| command | `list_meetings` | meetings フォルダ内の全会議と状態（新しい順、録音中のものを除く） |
 | command | `get_meeting` | 会議情報と全文 (transcript.json) |
 | command | `open_folder` | 会議フォルダをエクスプローラーで開く |
 | command | `get_paths` | 保存先・設定ファイルのパス |
@@ -200,7 +205,6 @@ whisper-cli は同梱済みなので、初回起動時に画面からモデル�
 
 ## 既知の制限
 
-- メイン画面の一覧は「この起動中に録音した会議」のみ。meetings フォルダ全体からの会議一覧は未実装。
 - 会議タイトルは仮に「10月13日 10:30 の会議」と表示している（要約の実装時にタイトルを生成する想定）。
 - 要約（自分の TODO・決定事項・持ち越し）は枠のみ。
 - フォントは IBM Plex Sans JP / Mono をアプリに同梱している（オフラインでも表示が崩れないように）。

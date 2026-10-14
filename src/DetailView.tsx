@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getMeeting, openFolder, type MeetingDetail, type TranscriptLine } from "./api";
+import { getMeeting, openFolder, retryTranscription, type MeetingDetail, type TranscriptLine } from "./api";
 import { hms, meetingSpan, meetingTitle } from "./format";
 
 const SPEAKERS = {
@@ -44,6 +44,12 @@ export default function DetailView({ dir, onBack }: { dir: string; onBack: () =>
 
   const open = () => openFolder(dir).catch((e) => setError(String(e)));
 
+  // Runs in the background; the current transcript stays until the new one is written.
+  const retranscribe = () =>
+    retryTranscription(dir)
+      .then(onBack)
+      .catch((e) => setError(String(e)));
+
   return (
     <div className="page">
       <header className="header">
@@ -58,6 +64,9 @@ export default function DetailView({ dir, onBack }: { dir: string; onBack: () =>
             </button>
             <button type="button" className="btn-outline" onClick={open}>
               フォルダを開く
+            </button>
+            <button type="button" className="btn-outline" onClick={retranscribe} disabled={!detail}>
+              文字起こしをやり直す
             </button>
           </div>
         </div>

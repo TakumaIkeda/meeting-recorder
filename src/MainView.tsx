@@ -49,6 +49,15 @@ function DeviceRow({ label, device, fallback, level }: {
 function StatusChip({ meeting, onRetry }: { meeting: MeetingInfo; onRetry: () => void }) {
   const s = meeting.status;
   switch (s.state) {
+    case "pending":
+      return (
+        <>
+          <span className="chip chip-pending">未処理</span>
+          <button type="button" className="btn-small" onClick={onRetry}>
+            文字起こし
+          </button>
+        </>
+      );
     case "done":
       return <span className="chip chip-done">完了</span>;
     case "queued":
@@ -102,14 +111,15 @@ export default function MainView({ onOpen }: { onOpen: (dir: string) => void }) 
   const [levels, setLevels] = useState({ mic: 0, system: 0 });
   const [outputRoot, setOutputRoot] = useState("meetings/");
   const [engine, setEngine] = useState<string | null>(null);
-  const [meetings, setMeetings] = useState<MeetingInfo[]>([]);
+  const [meetings, setMeetings] = useState<MeetingInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   // Meter values decay gradually instead of flickering between events.
   const smooth = useRef({ mic: 0, system: 0 });
 
   const upsertMeeting = useCallback((m: MeetingInfo) => {
-    setMeetings((list) => {
+    setMeetings((prev) => {
+      const list = prev ?? [];
       // Events and command results can arrive out of order; never go back to an older status.
       const current = list.find((x) => x.dir === m.dir);
       if (current && current.seq > m.seq) return list;
@@ -131,7 +141,12 @@ export default function MainView({ onOpen }: { onOpen: (dir: string) => void }) 
   useEffect(() => {
     refreshDevices();
     getPaths().then((p) => setOutputRoot(p.output_root)).catch(() => {});
-    listMeetings().then(setMeetings).catch(() => {});
+    listMeetings()
+      .then(setMeetings)
+      .catch((e) => {
+        setMeetings([]);
+        setError(String(e));
+      });
   }, [refreshDevices]);
 
   useEffect(() => {
@@ -254,13 +269,14 @@ export default function MainView({ onOpen }: { onOpen: (dir: string) => void }) 
 
         <SetupCard onStatus={(s) => setEngine(s.engine)} />
 
-        {meetings.length > 0 && (
-          <section aria-label="今回の録音" className="meetings">
+        {meetings && (
+          <section aria-label="会議一覧" className="meetings">
             <div className="section-head">
-              <h2>今回の録音</h2>
+              <h2>会議</h2>
               <div className="muted small">新しい順</div>
             </div>
             <div className="card meeting-list">
+              {meetings.length === 0 && <div className="meeting-empty">まだ会議はありません。録音すると、ここに表示されます。</div>}
               {meetings.map((m, i) => (
                 <MeetingRow
                   key={m.dir}

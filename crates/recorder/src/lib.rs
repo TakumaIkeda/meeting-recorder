@@ -13,5 +13,6 @@ pub use devices::{
     default_devices, list_all_devices, DefaultDevices, DeviceEntry, DeviceInfo, SourceKind,
 };
 pub use recorder::{
-    read_meta, Meters, Recorder, RecordingSummary, SessionMeta, TrackSummary, OUTPUT_SAMPLE_RATE,
+    read_meta, wav_duration_secs, Meters, Recorder, RecordingSummary, SessionMeta, TrackSummary,
+    OUTPUT_SAMPLE_RATE,
 };

@@ -1,4 +1,8 @@
-//! Transcription queue: one whisper-cli run at a time, status pushed to the UI as events.
+//! Meetings and their transcription status.
+//!
+//! The meetings folder is the source of truth: a meeting is done when it has `transcript.json`,
+//! failed when it has `transcription-error.txt`, otherwise not yet transcribed. On top of that,
+//! a queue runs one whisper-cli at a time and pushes live status to the UI as events.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -14,14 +18,22 @@ use transcriber::{Environment, WhisperConfig};
 use crate::Paths;
 
 pub const STATUS_EVENT: &str = "transcription-status";
+/// Last transcription error, kept so a failure survives an app restart.
+const ERROR_FILE: &str = "transcription-error.txt";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "state", rename_all = "lowercase")]
 pub enum JobStatus {
+    /// Recorded but never transcribed (e.g. recorded before a model was available).
+    Pending,
     Queued,
-    Transcribing { progress: u32 },
+    Transcribing {
+        progress: u32,
+    },
     Done,
-    Failed { error: String },
+    Failed {
+        error: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -34,6 +46,32 @@ pub struct MeetingInfo {
     /// order (the worker may already be running when `stop_recording` returns), so the UI keeps
     /// whichever copy has the highest `seq`.
     pub seq: u64,
+    /// Start time as a Unix timestamp, for sorting regardless of UTC offset.
+    #[serde(skip)]
+    started_ts: i64,
+}
+
+/// Describe a meeting folder from its files alone.
+pub fn read_info(dir: &Path) -> Result<MeetingInfo, String> {
+    let meta = recorder::read_meta(dir).map_err(|e| format!("{e:#}"))?;
+    let status = if dir.join(transcriber::transcript::TRANSCRIPT_FILE).is_file() {
+        JobStatus::Done
+    } else if let Ok(error) = std::fs::read_to_string(dir.join(ERROR_FILE)) {
+        JobStatus::Failed { error }
+    } else {
+        JobStatus::Pending
+    };
+    Ok(MeetingInfo {
+        dir: dir.to_path_buf(),
+        started_at: meta.started_at.to_rfc3339(),
+        // Missing if the app was killed while recording; the WAV header still has the length.
+        duration_secs: meta
+            .duration_secs
+            .or_else(|| recorder::wav_duration_secs(&dir.join("mic.wav"))),
+        status,
+        seq: 0,
+        started_ts: meta.started_at.timestamp(),
+    })
 }
 
 #[derive(Clone)]
@@ -85,10 +123,15 @@ impl Jobs {
                             Err(anyhow::anyhow!("文字起こし処理が異常終了しました"))
                         });
                     let status = match result {
-                        Ok(_) => JobStatus::Done,
-                        Err(e) => JobStatus::Failed {
-                            error: format!("{e:#}\n設定ファイル: {}", config_path.display()),
-                        },
+                        Ok(_) => {
+                            let _ = std::fs::remove_file(dir.join(ERROR_FILE));
+                            JobStatus::Done
+                        }
+                        Err(e) => {
+                            let error = format!("{e:#}\n設定ファイル: {}", config_path.display());
+                            let _ = std::fs::write(dir.join(ERROR_FILE), &error);
+                            JobStatus::Failed { error }
+                        }
                     };
                     worker.set_status(&app, &dir, status);
                 }
@@ -99,7 +142,7 @@ impl Jobs {
 
     /// Queue `dir` for transcription (no-op if it is already queued or running).
     pub fn enqueue(&self, app: &AppHandle, dir: &Path) -> Result<MeetingInfo, String> {
-        let meta = recorder::read_meta(dir).map_err(|e| format!("{e:#}"))?;
+        let from_disk = read_info(dir)?;
         let info = {
             let mut meetings = self.meetings.lock().unwrap();
             if let Some(m) = meetings.get(dir) {
@@ -108,11 +151,9 @@ impl Jobs {
                 }
             }
             let info = MeetingInfo {
-                dir: dir.to_path_buf(),
-                started_at: meta.started_at.to_rfc3339(),
-                duration_secs: meta.duration_secs,
                 status: JobStatus::Queued,
                 seq: self.next_seq(),
+                ..from_disk
             };
             meetings.insert(dir.to_path_buf(), info.clone());
             info
@@ -141,14 +182,30 @@ impl Jobs {
         self.seq.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    pub fn get(&self, dir: &Path) -> Option<MeetingInfo> {
-        self.meetings.lock().unwrap().get(dir).cloned()
+    /// Live status if the meeting went through the queue in this session, else from disk.
+    pub fn get(&self, dir: &Path) -> Result<MeetingInfo, String> {
+        match self.meetings.lock().unwrap().get(dir) {
+            Some(m) => Ok(m.clone()),
+            None => read_info(dir),
+        }
     }
 
-    /// Meetings handled since the app started, newest first.
-    pub fn list(&self) -> Vec<MeetingInfo> {
-        let mut list: Vec<_> = self.meetings.lock().unwrap().values().cloned().collect();
-        list.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    /// Every meeting folder under `root`, newest first. `skip` is the folder being recorded.
+    pub fn list(&self, root: &Path, skip: Option<&Path>) -> Vec<MeetingInfo> {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            return Vec::new();
+        };
+        let live = self.meetings.lock().unwrap().clone();
+        let mut list: Vec<MeetingInfo> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_dir() && Some(p.as_path()) != skip)
+            .filter_map(|dir| live.get(&dir).cloned().or_else(|| read_info(&dir).ok()))
+            .collect();
+        list.sort_by(|a, b| {
+            b.started_ts
+                .cmp(&a.started_ts)
+                .then_with(|| b.dir.cmp(&a.dir))
+        });
         list
     }
 }

@@ -27,6 +27,7 @@ export interface StartedRecording {
 }
 
 export type JobStatus =
+  | { state: "pending" }
   | { state: "queued" }
   | { state: "transcribing"; progress: number }
   | { state: "done" }
