@@ -13,6 +13,7 @@ fn main() -> anyhow::Result<()> {
     let model = PathBuf::from(args.next().ok_or_else(|| anyhow::anyhow!(usage))?);
     let config = Whisper {
         cli: args.next().unwrap_or_else(|| "whisper-cli".into()).into(),
+        fallback_cli: None,
         model,
         language: "ja".into(),
         threads: std::thread::available_parallelism().map_or(4, |n| n.get()),

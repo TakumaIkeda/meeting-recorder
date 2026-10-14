@@ -23,6 +23,8 @@ pub struct WhisperConfig {
     pub language: String,
     /// CPU threads; 0 = number of logical CPUs.
     pub threads: usize,
+    /// Use the GPU (CUDA) build when it has been downloaded. `false` forces the CPU build.
+    pub use_gpu: bool,
 }
 
 impl Default for WhisperConfig {
@@ -32,6 +34,7 @@ impl Default for WhisperConfig {
             model: None,
             language: "ja".into(),
             threads: 0,
+            use_gpu: true,
         }
     }
 }
@@ -41,6 +44,8 @@ impl Default for WhisperConfig {
 pub struct Environment {
     /// whisper-cli shipped with the app, if any.
     pub bundled_cli: Option<PathBuf>,
+    /// whisper-cli of the downloaded GPU (CUDA) build, if installed.
+    pub gpu_cli: Option<PathBuf>,
     /// Folder that downloaded models are saved to.
     pub models_dir: PathBuf,
 }
@@ -49,6 +54,8 @@ pub struct Environment {
 #[derive(Debug, Clone)]
 pub struct Whisper {
     pub cli: PathBuf,
+    /// Tried if `cli` fails (the CPU build when `cli` is the GPU build).
+    pub fallback_cli: Option<PathBuf>,
     pub model: PathBuf,
     pub language: String,
     pub threads: usize,
@@ -84,14 +91,26 @@ impl WhisperConfig {
             .with_context(|| format!("{} を書き込めません", path.display()))
     }
 
-    /// The whisper-cli to run: an explicit path, else the bundled one, else a PATH lookup.
+    /// The whisper-cli to run: an explicit path, else the GPU build (if downloaded and enabled),
+    /// else the bundled CPU build, else a PATH lookup.
     pub fn cli_path(&self, env: &Environment) -> PathBuf {
-        if let Some(p) = &self.whisper_cli {
-            // A bare file name (e.g. an older default "whisper-cli.exe") means "find it for me".
-            if p.components().count() > 1 {
-                return p.clone();
-            }
+        if let Some(p) = self.explicit_cli() {
+            return p.to_path_buf();
         }
+        if let Some(gpu) = env.gpu_cli.as_ref().filter(|p| self.use_gpu && p.is_file()) {
+            return gpu.clone();
+        }
+        self.cpu_cli_path(env)
+    }
+
+    /// A bare file name (e.g. an older default "whisper-cli.exe") means "find it for me".
+    fn explicit_cli(&self) -> Option<&Path> {
+        self.whisper_cli
+            .as_deref()
+            .filter(|p| p.components().count() > 1)
+    }
+
+    fn cpu_cli_path(&self, env: &Environment) -> PathBuf {
         match &env.bundled_cli {
             Some(bundled) if bundled.is_file() => bundled.clone(),
             _ => self
@@ -132,8 +151,12 @@ impl WhisperConfig {
                 None => bail!("文字起こしモデルがありません。画面の「モデルをダウンロード」から取得してください。"),
             }
         };
+        let cli = self.cli_path(env);
+        let cpu = self.cpu_cli_path(env);
+        let fallback_cli = (self.explicit_cli().is_none() && cli != cpu).then_some(cpu);
         Ok(Whisper {
-            cli: self.cli_path(env),
+            cli,
+            fallback_cli,
             model,
             language: self.language.clone(),
             threads: self.threads(),
@@ -153,6 +176,7 @@ mod tests {
         }
         Environment {
             bundled_cli: Some(cli),
+            gpu_cli: None,
             models_dir: dir.join("models"),
         }
     }
@@ -182,6 +206,42 @@ mod tests {
         assert_eq!(c.cli_path(&env(&d2, false)), PathBuf::from(cli_name()));
         fs::remove_dir_all(&d).unwrap();
         fs::remove_dir_all(&d2).unwrap();
+    }
+
+    #[test]
+    fn gpu_build_is_preferred_with_cpu_fallback() {
+        let d = tmp("gpu");
+        let mut e = env(&d, true);
+        let bundled = e.bundled_cli.clone().unwrap();
+        fs::create_dir_all(&e.models_dir).unwrap();
+        fs::write(e.models_dir.join(MODELS[0].file), b"x").unwrap();
+        let gpu = d.join("gpu").join(cli_name());
+        fs::create_dir_all(gpu.parent().unwrap()).unwrap();
+        fs::write(&gpu, b"").unwrap();
+        e.gpu_cli = Some(gpu.clone());
+
+        let w = WhisperConfig::default().resolve(&e).unwrap();
+        assert_eq!(
+            (w.cli, w.fallback_cli),
+            (gpu.clone(), Some(bundled.clone()))
+        );
+
+        let cpu_only = WhisperConfig {
+            use_gpu: false,
+            ..WhisperConfig::default()
+        };
+        let w = cpu_only.resolve(&e).unwrap();
+        assert_eq!((w.cli, w.fallback_cli), (bundled, None));
+
+        // An explicit whisper-cli always wins and has no fallback.
+        let custom = d.join("custom").join(cli_name());
+        let explicit = WhisperConfig {
+            whisper_cli: Some(custom.clone()),
+            ..WhisperConfig::default()
+        };
+        let w = explicit.resolve(&e).unwrap();
+        assert_eq!((w.cli, w.fallback_cli), (custom, None));
+        fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use sha1::{Digest, Sha1};
+use sha2::Sha256;
 
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct ModelSpec {
@@ -58,6 +59,42 @@ pub fn url(spec: &ModelSpec) -> String {
     format!("{BASE_URL}/{}", spec.file)
 }
 
+/// Expected hash of a download (lowercase hex).
+#[derive(Debug, Clone, Copy)]
+pub enum Checksum<'a> {
+    Sha1(&'a str),
+    Sha256(&'a str),
+}
+
+enum Hasher {
+    Sha1(Sha1),
+    Sha256(Sha256),
+}
+
+impl Hasher {
+    fn new(c: Checksum) -> Self {
+        match c {
+            Checksum::Sha1(_) => Hasher::Sha1(Sha1::new()),
+            Checksum::Sha256(_) => Hasher::Sha256(Sha256::new()),
+        }
+    }
+
+    fn update(&mut self, data: &[u8]) {
+        match self {
+            Hasher::Sha1(h) => h.update(data),
+            Hasher::Sha256(h) => h.update(data),
+        }
+    }
+
+    fn hex(self) -> String {
+        let bytes: Vec<u8> = match self {
+            Hasher::Sha1(h) => h.finalize().to_vec(),
+            Hasher::Sha256(h) => h.finalize().to_vec(),
+        };
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+}
+
 /// Download `spec` into `dir`. Returns `None` if `cancel` was set.
 pub fn download(
     spec: &ModelSpec,
@@ -67,17 +104,17 @@ pub fn download(
 ) -> Result<Option<PathBuf>> {
     download_from(
         &url(spec),
-        spec.sha1,
+        Checksum::Sha1(spec.sha1),
         &dir.join(spec.file),
         progress,
         cancel,
     )
 }
 
-/// Stream `url` into `dest` via `dest.part`, verifying the SHA-1 before renaming into place.
+/// Stream `url` into `dest` via `<dest>.part`, verifying the checksum before renaming into place.
 pub fn download_from(
     url: &str,
-    sha1: &str,
+    checksum: Checksum,
     dest: &Path,
     progress: &mut dyn FnMut(u64, Option<u64>),
     cancel: &AtomicBool,
@@ -86,7 +123,9 @@ pub fn download_from(
         fs::create_dir_all(parent)
             .with_context(|| format!("{} を作成できません", parent.display()))?;
     }
-    let part = dest.with_extension("bin.part");
+    let mut part_name = dest.file_name().unwrap_or_default().to_os_string();
+    part_name.push(".part");
+    let part = dest.with_file_name(part_name);
     let result = (|| {
         let tls = ureq::tls::TlsConfig::builder()
             .provider(ureq::tls::TlsProvider::NativeTls)
@@ -102,7 +141,7 @@ pub fn download_from(
         let mut out = BufWriter::new(
             File::create(&part).with_context(|| format!("{} を作成できません", part.display()))?,
         );
-        let mut hasher = Sha1::new();
+        let mut hasher = Hasher::new(checksum);
         let mut buf = vec![0u8; 256 * 1024];
         let mut done: u64 = 0;
         loop {
@@ -122,13 +161,10 @@ pub fn download_from(
             progress(done, total);
         }
         out.flush()?;
-        let actual: String = hasher
-            .finalize()
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        if actual != sha1 {
-            bail!("ダウンロードしたファイルが壊れています（SHA-1 不一致: {actual}）。もう一度お試しください。");
+        let (Checksum::Sha1(expected) | Checksum::Sha256(expected)) = checksum;
+        let actual = hasher.hex();
+        if actual != expected {
+            bail!("ダウンロードしたファイルが壊れています（チェックサム不一致: {actual}）。もう一度お試しください。");
         }
         Ok(true)
     })();
@@ -200,7 +236,7 @@ mod tests {
         let mut last = (0, None);
         let got = download_from(
             &url,
-            &sha1_hex(&body),
+            Checksum::Sha1(&sha1_hex(&body)),
             &dest,
             &mut |d, t| last = (d, t),
             &AtomicBool::new(false),
@@ -214,19 +250,49 @@ mod tests {
     }
 
     #[test]
+    fn verifies_sha256() {
+        let body = b"cuda pack".to_vec();
+        let url = serve(body.clone());
+        let dir = tmp("sha256");
+        let dest = dir.join("pack.zip");
+        let hex: String = Sha256::digest(&body)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let got = download_from(
+            &url,
+            Checksum::Sha256(&hex),
+            &dest,
+            &mut |_, _| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(got, Some(dest.clone()));
+        let bad = download_from(
+            &url,
+            Checksum::Sha256(&"0".repeat(64)),
+            &dest,
+            &mut |_, _| {},
+            &AtomicBool::new(false),
+        );
+        assert!(bad.is_err());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn rejects_checksum_mismatch_and_cleans_up() {
         let url = serve(b"not the model".to_vec());
         let dir = tmp("bad");
         let dest = dir.join("ggml-test.bin");
         let err = download_from(
             &url,
-            &"0".repeat(40),
+            Checksum::Sha1(&"0".repeat(40)),
             &dest,
             &mut |_, _| {},
             &AtomicBool::new(false),
         )
         .unwrap_err();
-        assert!(err.to_string().contains("SHA-1"), "{err}");
+        assert!(err.to_string().contains("チェックサム"), "{err}");
         assert!(!dest.exists() && !dest.with_extension("bin.part").exists());
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -236,7 +302,14 @@ mod tests {
         let url = serve(vec![0u8; 1_000_000]);
         let dir = tmp("cancel");
         let dest = dir.join("ggml-test.bin");
-        let got = download_from(&url, "x", &dest, &mut |_, _| {}, &AtomicBool::new(true)).unwrap();
+        let got = download_from(
+            &url,
+            Checksum::Sha1("x"),
+            &dest,
+            &mut |_, _| {},
+            &AtomicBool::new(true),
+        )
+        .unwrap();
         assert_eq!(got, None);
         assert!(!dest.exists() && !dest.with_extension("bin.part").exists());
         fs::remove_dir_all(&dir).unwrap();

@@ -560,3 +560,20 @@ button {
   justify-content: space-between;
   gap: 12px;
 }
+.setup-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--divider);
+}
+.setup-section h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+.button-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

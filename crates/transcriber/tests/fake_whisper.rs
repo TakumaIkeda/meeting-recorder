@@ -51,6 +51,7 @@ fn transcribes_both_tracks_and_skips_silent_ones() {
     fs::write(&model, b"").unwrap();
     let config = Whisper {
         cli: cli.clone(),
+        fallback_cli: None,
         model: model.clone(),
         language: "ja".into(),
         threads: 2,
@@ -71,6 +72,24 @@ fn transcribes_both_tracks_and_skips_silent_ones() {
     write_wav(&dir.join("system.wav"), 0);
     let t = transcribe_meeting(&dir, &config, &mut |_| {}).unwrap();
     assert_eq!(t.lines.len(), 1);
+
+    // A failing primary build (e.g. GPU) falls back to the CPU build per track.
+    write_wav(&dir.join("system.wav"), 3000);
+    let broken = root.join("broken-cli");
+    fs::write(
+        &broken,
+        "#!/bin/sh\necho 'ggml_cuda_init: failed' >&2\nexit 1\n",
+    )
+    .unwrap();
+    fs::set_permissions(&broken, fs::Permissions::from_mode(0o755)).unwrap();
+    let gpu_first = Whisper {
+        cli: broken.clone(),
+        fallback_cli: Some(cli.clone()),
+        ..config.clone()
+    };
+    let t = transcribe_meeting(&dir, &gpu_first, &mut |_| {}).unwrap();
+    assert_eq!(t.lines.len(), 2);
+    assert!(dir.join("whisper-mic-gpu-failed.log").is_file());
 
     // Missing whisper-cli gives an actionable error.
     let bad = Whisper {

@@ -17,7 +17,8 @@ crates/transcriber/ GUI 非依存の文字起こしモジュール
   src/whisper.rs   whisper-cli の実行、進捗の読み取り、JSON(-oj) の解析
   src/transcript.rs 2 トラックを時刻順に統合（自分 / 相手）、transcript.json の保存
   src/config.rs    whisper-cli / モデルの設定 (config.json) と、同梱・ダウンロード済みへの解決
-  src/models.rs    モデル一覧とダウンロード（SHA-1 検証）
+  src/models.rs    モデル一覧とダウンロード（SHA-1 / SHA-256 検証）
+  src/gpu.rs       GPU (CUDA) 版 whisper.cpp のダウンロードと展開
   examples/        既存フォルダを文字起こしする CLI
 src-tauri/         Tauri シェル（コマンド・イベント・文字起こしキュー・モデルのダウンロード）
   whisper/         同梱する whisper-cli（scripts/fetch-whisper.mjs が取得。git 管理外）
@@ -79,6 +80,20 @@ design/            画面デザインの元データ（デザインツール独�
 | large-v3-turbo | 1.5 GB | 量子化なし。わずかに高精度 |
 | small | 466 MB | 軽量・高速。非力な PC 向け |
 
+### GPU 高速化（NVIDIA）
+
+NVIDIA のドライバーが入っている PC では、「文字起こしの準備」に **GPU 高速化** が表示される。
+ダウンロードすると whisper.cpp 公式の CUDA 版（v1.9.2 / CUDA 12.4、約 640 MB・展開後約 1.2 GB、SHA256 で検証）が
+`<ドキュメント>\MeetingRecorder\runtime\` に入り、以降の文字起こしで自動的に使われる（ヘッダーに「（GPU）」と表示）。
+
+- インストーラーには入れていない（大きすぎるため）。同じインストーラーで Radeon / GPU なしの PC にも入れられる。
+- GPU 版で失敗した場合はトラックごとに自動で CPU 版に切り替える（GPU 版のログは `whisper-*-gpu-failed.log` に残る）。
+- GPU が使われているかは `whisper-mic.log` に CUDA の行（`ggml_cuda_init: found 1 CUDA devices` など）があるかで分かる。
+- 「使わない」を押すと `config.json` の `use_gpu` が `false` になり表示されなくなる。戻すときは `true` にする。
+- 必要なのは NVIDIA のドライバーだけで、CUDA Toolkit のインストールは不要。
+
+### 設定ファイル
+
 `<ドキュメント>\MeetingRecorder\config.json` で上書きできる（初回に自動作成。`null` は「同梱 / ダウンロード済みのものを使う」）：
 
 ```json
@@ -86,7 +101,8 @@ design/            画面デザインの元データ（デザインツール独�
   "whisper_cli": null,
   "model": null,
   "language": "ja",
-  "threads": 0
+  "threads": 0,
+  "use_gpu": true
 }
 ```
 
@@ -175,6 +191,7 @@ whisper-cli は同梱済みなので、初回起動時に画面からモデル�
 | command | `get_paths` | 保存先・設定ファイルのパス |
 | command | `get_setup` | whisper-cli とモデルの有無、選べるモデル一覧 |
 | command | `start_model_download` / `cancel_model_download` | モデルのダウンロード開始 / 中止 |
+| command | `start_gpu_download` / `set_use_gpu` | GPU 版のダウンロード / 使う・使わない |
 | event | `model-download` | ダウンロードの進捗と結果。`state` = `running` / `done` / `cancelled` / `failed` |
 | event | `recording-progress` | 100 ms ごと。`elapsed_ms`, `mic_level`, `system_level`（直近のピーク 0〜1）, `errors` |
 | event | `transcription-status` | 文字起こしの状態変化。`status.state` = `queued` / `transcribing`(+`progress`) / `done` / `failed`(+`error`) |

@@ -6,13 +6,14 @@
 //! The result is saved as `transcript.json` in the meeting folder.
 
 pub mod config;
+pub mod gpu;
 pub mod models;
 pub mod transcript;
 pub mod whisper;
 
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 pub use config::{Environment, Whisper, WhisperConfig};
 pub use transcript::{Line, Speaker, Transcript};
@@ -28,7 +29,23 @@ pub fn transcribe_meeting(dir: &Path, config: &Whisper, progress: Progress) -> R
     for (i, (name, speaker)) in TRACKS.into_iter().enumerate() {
         let base = i as u32 * 100 / TRACKS.len() as u32;
         let mut on_track = |p: u32| progress(base + p / TRACKS.len() as u32);
-        let segments = whisper::transcribe_track(dir, name, config, &mut on_track)?;
+        let segments = match whisper::transcribe_track(dir, name, config, &mut on_track) {
+            Ok(s) => s,
+            // e.g. the GPU build failing on a driver problem: retry this track on the CPU build.
+            Err(e) if config.fallback_cli.is_some() => {
+                let log = dir.join(format!("whisper-{name}.log"));
+                let _ = std::fs::rename(&log, dir.join(format!("whisper-{name}-gpu-failed.log")));
+                let cpu = Whisper {
+                    cli: config.fallback_cli.clone().unwrap(),
+                    fallback_cli: None,
+                    ..config.clone()
+                };
+                whisper::transcribe_track(dir, name, &cpu, &mut on_track).with_context(|| {
+                    format!("CPU 版での再実行も失敗しました（GPU 版のエラー: {e:#}）")
+                })?
+            }
+            Err(e) => return Err(e),
+        };
         tracks.push((speaker, segments));
     }
     progress(100);

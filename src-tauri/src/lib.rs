@@ -47,6 +47,8 @@ pub(crate) struct Paths {
     pub(crate) models: PathBuf,
     /// whisper-cli bundled as a resource (`src-tauri/whisper/`, see scripts/fetch-whisper.mjs).
     pub(crate) bundled_cli: Option<PathBuf>,
+    /// `runtime/` — downloaded GPU build of whisper.cpp.
+    pub(crate) runtime: PathBuf,
 }
 
 impl Paths {
@@ -66,12 +68,14 @@ impl Paths {
             config: base.join("config.json"),
             models: base.join("models"),
             bundled_cli,
+            runtime: base.join("runtime"),
         })
     }
 
     pub(crate) fn environment(&self) -> transcriber::Environment {
         transcriber::Environment {
             bundled_cli: self.bundled_cli.clone(),
+            gpu_cli: transcriber::gpu::CUDA_PACK.installed_cli(&self.runtime),
             models_dir: self.models.clone(),
         }
     }
@@ -269,11 +273,7 @@ pub fn run() {
         .manage(Recording::default())
         .setup(|app| {
             let paths = Paths::resolve(app.handle())?;
-            let jobs = Jobs::start(
-                app.handle().clone(),
-                paths.config.clone(),
-                paths.environment(),
-            );
+            let jobs = Jobs::start(app.handle().clone(), paths.clone());
             app.manage(paths);
             app.manage(jobs);
             app.manage(setup::Downloads::default());
@@ -291,6 +291,8 @@ pub fn run() {
             setup::get_setup,
             setup::start_model_download,
             setup::cancel_model_download,
+            setup::start_gpu_download,
+            setup::set_use_gpu,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

@@ -98,21 +98,34 @@ export type DownloadState = DownloadPhase & {
   total: number | null;
 };
 
+export interface GpuPack {
+  version: string;
+  size_mib: number;
+}
+
 export interface SetupStatus {
   cli_path: string;
-  cli_bundled: boolean;
   cli_found: boolean;
+  /** Which whisper-cli transcription will use. */
+  engine: "gpu" | "cpu" | "custom";
   model_path: string | null;
   model_found: boolean;
   models: ModelSpec[];
   config_path: string;
   models_dir: string;
+  /** An NVIDIA driver is installed. */
+  nvidia: boolean;
+  gpu_installed: boolean;
+  use_gpu: boolean;
+  gpu_pack: GpuPack;
   download: DownloadState | null;
 }
 
 export const getSetup = () => invoke<SetupStatus>("get_setup");
 export const startModelDownload = (id: string) => invoke<void>("start_model_download", { id });
 export const cancelModelDownload = () => invoke<void>("cancel_model_download");
+export const startGpuDownload = () => invoke<void>("start_gpu_download");
+export const setUseGpu = (enabled: boolean) => invoke<void>("set_use_gpu", { enabled });
 
 export const onModelDownload = (cb: (d: DownloadState) => void): Promise<UnlistenFn> =>
   listen<DownloadState>("model-download", (e) => cb(e.payload));

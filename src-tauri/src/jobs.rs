@@ -11,6 +11,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use transcriber::{Environment, WhisperConfig};
 
+use crate::Paths;
+
 pub const STATUS_EVENT: &str = "transcription-status";
 
 #[derive(Debug, Clone, Serialize)]
@@ -42,8 +44,10 @@ pub struct Jobs {
 }
 
 impl Jobs {
-    /// Start the worker thread. `config_path` is re-read for every job so edits apply on retry.
-    pub fn start(app: AppHandle, config_path: PathBuf, env: Environment) -> Self {
+    /// Start the worker thread. Settings and installed runtimes are re-read for every job, so
+    /// config edits or a GPU build downloaded meanwhile apply on the next run or retry.
+    pub fn start(app: AppHandle, paths: Paths) -> Self {
+        let config_path = paths.config.clone();
         let (queue, rx) = mpsc::channel::<PathBuf>();
         let meetings: Arc<Mutex<HashMap<PathBuf, MeetingInfo>>> = Arc::default();
         let jobs = Self {
@@ -58,6 +62,7 @@ impl Jobs {
                 for dir in rx {
                     worker.set_status(&app, &dir, JobStatus::Transcribing { progress: 0 });
                     let run = || {
+                        let env: Environment = paths.environment();
                         WhisperConfig::load_or_create(&config_path)
                             .and_then(|config| config.resolve(&env))
                             .and_then(|config| {

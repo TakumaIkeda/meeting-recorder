@@ -101,6 +101,7 @@ export default function MainView({ onOpen }: { onOpen: (dir: string) => void }) 
   const [elapsedMs, setElapsedMs] = useState(0);
   const [levels, setLevels] = useState({ mic: 0, system: 0 });
   const [outputRoot, setOutputRoot] = useState("meetings/");
+  const [engine, setEngine] = useState<string | null>(null);
   const [meetings, setMeetings] = useState<MeetingInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -198,7 +199,7 @@ export default function MainView({ onOpen }: { onOpen: (dir: string) => void }) 
         <div className="header-inner">
           <div className="brand">
             <div className="brand-name">会議ログ</div>
-            <div className="brand-note">文字起こしはローカル処理</div>
+            <div className="brand-note">文字起こしはローカル処理{engine === "gpu" ? "（GPU）" : ""}</div>
           </div>
           <div className="mono muted header-path" title={outputRoot}>
             保存先 {outputRoot}
@@ -251,7 +252,7 @@ export default function MainView({ onOpen }: { onOpen: (dir: string) => void }) 
           </div>
         )}
 
-        <SetupCard />
+        <SetupCard onStatus={(s) => setEngine(s.engine)} />
 
         {meetings.length > 0 && (
           <section aria-label="今回の録音" className="meetings">
