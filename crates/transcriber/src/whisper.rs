@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 use anyhow::{anyhow, bail, Context, Result};
 use serde::Deserialize;
 
-use crate::config::WhisperConfig;
+use crate::config::Whisper;
 
 /// One whisper segment, in milliseconds from the start of the file.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,7 +26,7 @@ const SILENCE_PEAK: i16 = 100;
 pub fn transcribe_track(
     dir: &Path,
     name: &str,
-    config: &WhisperConfig,
+    config: &Whisper,
     progress: &mut dyn FnMut(u32),
 ) -> Result<Vec<Segment>> {
     let wav = format!("{name}.wav");
@@ -38,7 +38,7 @@ pub fn transcribe_track(
     let _ = std::fs::remove_file(&json_path);
 
     // Run inside the meeting folder with relative names so the paths whisper-cli sees are ASCII.
-    let mut cmd = Command::new(&config.whisper_cli);
+    let mut cmd = Command::new(&config.cli);
     cmd.current_dir(dir)
         .arg("-m")
         .arg(&config.model)
@@ -52,7 +52,7 @@ pub fn transcribe_track(
             "-l",
             &config.language,
         ])
-        .args(["-t", &config.threads().to_string()])
+        .args(["-t", &config.threads.to_string()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -65,8 +65,8 @@ pub fn transcribe_track(
     let mut child = cmd.spawn().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             anyhow!(
-                "whisper-cli が見つかりません: {}\n設定ファイルの \"whisper_cli\" に whisper-cli のパスを指定してください。",
-                config.whisper_cli.display()
+                "whisper-cli が見つかりません: {}\nアプリに同梱されていない場合は npm run fetch-whisper を実行してビルドし直すか、config.json の \"whisper_cli\" にパスを指定してください。",
+                config.cli.display()
             )
         } else {
             anyhow!("whisper-cli を起動できません: {e}")
@@ -93,6 +93,12 @@ pub fn transcribe_track(
         }
     }
     let status = child.wait()?;
+    // 0xC0000135 STATUS_DLL_NOT_FOUND: typically the Visual C++ runtime is missing.
+    if status.code() == Some(0xC000_0135_u32 as i32) {
+        bail!(
+            "whisper-cli の実行に必要な DLL が見つかりません。\nMicrosoft Visual C++ 再頒布可能パッケージ (x64) をインストールしてください: https://aka.ms/vs/17/release/vc_redist.x64.exe"
+        );
+    }
     if !status.success() {
         bail!(
             "whisper-cli が失敗しました（{wav}, {status}）\n{}",

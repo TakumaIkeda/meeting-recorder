@@ -4,3 +4,4 @@ target/
 src-tauri/gen/schemas/
 meetings/
 *.log
+src-tauri/whisper/

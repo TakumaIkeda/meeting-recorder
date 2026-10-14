@@ -4,20 +4,19 @@
 
 use std::path::PathBuf;
 
-use transcriber::{transcribe_meeting, Speaker, WhisperConfig};
+use transcriber::{transcribe_meeting, Speaker, Whisper};
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
     let usage = "usage: transcribe <会議フォルダ> <モデル.bin> [whisper-cli]";
     let dir = PathBuf::from(args.next().ok_or_else(|| anyhow::anyhow!(usage))?);
     let model = PathBuf::from(args.next().ok_or_else(|| anyhow::anyhow!(usage))?);
-    let mut config = WhisperConfig {
+    let config = Whisper {
+        cli: args.next().unwrap_or_else(|| "whisper-cli".into()).into(),
         model,
-        ..WhisperConfig::default()
+        language: "ja".into(),
+        threads: std::thread::available_parallelism().map_or(4, |n| n.get()),
     };
-    if let Some(cli) = args.next() {
-        config.whisper_cli = cli.into();
-    }
 
     let transcript = transcribe_meeting(&dir, &config, &mut |p| eprint!("\r文字起こし中 {p:3}%"))?;
     eprintln!();

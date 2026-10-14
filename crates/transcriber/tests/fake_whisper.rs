@@ -5,7 +5,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use transcriber::{transcribe_meeting, Speaker, WhisperConfig};
+use transcriber::{transcribe_meeting, Speaker, Whisper};
 
 fn write_wav(path: &Path, amplitude: i16) {
     let spec = hound::WavSpec {
@@ -49,10 +49,11 @@ fn transcribes_both_tracks_and_skips_silent_ones() {
     fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
     let model = root.join("model.bin");
     fs::write(&model, b"").unwrap();
-    let config = WhisperConfig {
-        whisper_cli: cli.clone(),
+    let config = Whisper {
+        cli: cli.clone(),
         model: model.clone(),
-        ..WhisperConfig::default()
+        language: "ja".into(),
+        threads: 2,
     };
 
     write_wav(&dir.join("mic.wav"), 3000);
@@ -72,8 +73,8 @@ fn transcribes_both_tracks_and_skips_silent_ones() {
     assert_eq!(t.lines.len(), 1);
 
     // Missing whisper-cli gives an actionable error.
-    let bad = WhisperConfig {
-        whisper_cli: root.join("nope"),
+    let bad = Whisper {
+        cli: root.join("nope"),
         ..config
     };
     let err = format!(

@@ -12,6 +12,7 @@ import {
   type MeetingInfo,
 } from "./api";
 import { durationLabel, hms, levelToUnit, meetingTitle, shortDateTime } from "./format";
+import SetupCard from "./SetupCard";
 
 type RecState = "idle" | "starting" | "recording" | "stopping";
 
@@ -249,6 +250,8 @@ export default function MainView({ onOpen }: { onOpen: (dir: string) => void }) 
             {warnings.map((w, i) => <div key={i}>{w}</div>)}
           </div>
         )}
+
+        <SetupCard />
 
         {meetings.length > 0 && (
           <section aria-label="今回の録音" className="meetings">

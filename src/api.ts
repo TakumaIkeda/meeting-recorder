@@ -77,3 +77,42 @@ export const onRecordingProgress = (cb: (p: RecordingProgress) => void): Promise
 
 export const onTranscriptionStatus = (cb: (m: MeetingInfo) => void): Promise<UnlistenFn> =>
   listen<MeetingInfo>("transcription-status", (e) => cb(e.payload));
+
+export interface ModelSpec {
+  id: string;
+  file: string;
+  label: string;
+  note: string;
+  size_mib: number;
+}
+
+export type DownloadPhase =
+  | { state: "running" }
+  | { state: "done" }
+  | { state: "cancelled" }
+  | { state: "failed"; error: string };
+
+export type DownloadState = DownloadPhase & {
+  id: string;
+  downloaded: number;
+  total: number | null;
+};
+
+export interface SetupStatus {
+  cli_path: string;
+  cli_bundled: boolean;
+  cli_found: boolean;
+  model_path: string | null;
+  model_found: boolean;
+  models: ModelSpec[];
+  config_path: string;
+  models_dir: string;
+  download: DownloadState | null;
+}
+
+export const getSetup = () => invoke<SetupStatus>("get_setup");
+export const startModelDownload = (id: string) => invoke<void>("start_model_download", { id });
+export const cancelModelDownload = () => invoke<void>("cancel_model_download");
+
+export const onModelDownload = (cb: (d: DownloadState) => void): Promise<UnlistenFn> =>
+  listen<DownloadState>("model-download", (e) => cb(e.payload));

@@ -2,6 +2,7 @@
 //! pushes recording progress and transcription status to the frontend as events.
 
 mod jobs;
+mod setup;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,13 +38,15 @@ struct Recording(Arc<Mutex<Option<Active>>>);
 
 /// Folder layout under `<Documents>/MeetingRecorder`.
 #[derive(Clone, Serialize)]
-struct Paths {
+pub(crate) struct Paths {
     /// `meetings/` — one folder per recording.
     output_root: PathBuf,
     /// `config.json` — whisper-cli / model settings.
-    config: PathBuf,
-    /// `models/` — default location for ggml models.
-    models: PathBuf,
+    pub(crate) config: PathBuf,
+    /// `models/` — where models are downloaded to.
+    pub(crate) models: PathBuf,
+    /// whisper-cli bundled as a resource (`src-tauri/whisper/`, see scripts/fetch-whisper.mjs).
+    pub(crate) bundled_cli: Option<PathBuf>,
 }
 
 impl Paths {
@@ -53,11 +56,24 @@ impl Paths {
             .document_dir()
             .map_err(|e| format!("ドキュメントフォルダを取得できません: {e}"))?
             .join("MeetingRecorder");
+        let bundled_cli = app
+            .path()
+            .resource_dir()
+            .ok()
+            .map(|d| d.join("whisper").join("whisper-cli.exe"));
         Ok(Self {
             output_root: base.join("meetings"),
             config: base.join("config.json"),
             models: base.join("models"),
+            bundled_cli,
         })
+    }
+
+    pub(crate) fn environment(&self) -> transcriber::Environment {
+        transcriber::Environment {
+            bundled_cli: self.bundled_cli.clone(),
+            models_dir: self.models.clone(),
+        }
     }
 
     /// Only allow commands to touch meeting folders under `output_root`.
@@ -256,10 +272,11 @@ pub fn run() {
             let jobs = Jobs::start(
                 app.handle().clone(),
                 paths.config.clone(),
-                paths.models.clone(),
+                paths.environment(),
             );
             app.manage(paths);
             app.manage(jobs);
+            app.manage(setup::Downloads::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -271,6 +288,9 @@ pub fn run() {
             list_meetings,
             get_meeting,
             open_folder,
+            setup::get_setup,
+            setup::start_model_download,
+            setup::cancel_model_download,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

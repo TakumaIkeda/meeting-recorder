@@ -16,9 +16,12 @@ crates/recorder/   GUI 非依存の録音モジュール (cpal + hound)
 crates/transcriber/ GUI 非依存の文字起こしモジュール
   src/whisper.rs   whisper-cli の実行、進捗の読み取り、JSON(-oj) の解析
   src/transcript.rs 2 トラックを時刻順に統合（自分 / 相手）、transcript.json の保存
-  src/config.rs    whisper-cli / モデルの設定 (config.json)
+  src/config.rs    whisper-cli / モデルの設定 (config.json) と、同梱・ダウンロード済みへの解決
+  src/models.rs    モデル一覧とダウンロード（SHA-1 検証）
   examples/        既存フォルダを文字起こしする CLI
-src-tauri/         Tauri シェル（コマンド・イベント・文字起こしキュー）
+src-tauri/         Tauri シェル（コマンド・イベント・文字起こしキュー・モデルのダウンロード）
+  whisper/         同梱する whisper-cli（scripts/fetch-whisper.mjs が取得。git 管理外）
+scripts/           fetch-whisper.mjs
 src/               React フロントエンド
   MainView.tsx     録音と「今回の録音」の状態表示
   DetailView.tsx   会議の詳細（要約の枠 + 全文）
@@ -59,21 +62,38 @@ design/            画面デザインの元データ（デザインツール独�
 
 ### セットアップ
 
-1. [whisper.cpp](https://github.com/ggml-org/whisper.cpp) の Windows 版バイナリ（`whisper-cli.exe`）を用意する。
-2. ggml モデル（例: `ggml-large-v3-turbo.bin`）をダウンロードする。
-3. 初回起動時（または初回の文字起こし時）に `<ドキュメント>\MeetingRecorder\config.json` が作られるので編集する：
+**whisper-cli はアプリに同梱**、**モデルは初回にアプリからダウンロード**する。別の PC でも追加の手順なしで動く。
+
+- whisper-cli：`scripts/fetch-whisper.mjs` が whisper.cpp の公式リリース（v1.9.2 の Windows CPU 版、SHA256 で検証）を
+  `src-tauri/whisper/` に取得し、Tauri のリソースとして同梱する。`npm run tauri dev` / `npm run tauri build` の前に自動で実行される
+  （取得済みなら何もしない。手動実行は `npm run fetch-whisper`）。
+  - CPU 版は実行時に CPU に合った `ggml-cpu-*.dll` を選ぶので、どの x64 PC でも動く（GPU は使わない）。
+  - whisper-cli に必要な Visual C++ ランタイムの DLL も、ビルドする PC から一緒に同梱する。
+    そのため、実行する PC に Visual C++ 再頒布可能パッケージがなくても動く。
+- モデル：文字起こしの準備ができていないと、メイン画面に「文字起こしの準備」が表示される。モデルを選んでダウンロードすると
+  `<ドキュメント>\MeetingRecorder\models\` に保存される（Hugging Face の whisper.cpp 公式リポジトリから取得し、SHA-1 で検証）。
+
+| モデル | サイズ | 用途 |
+|---|---|---|
+| large-v3-turbo (q5_0) | 547 MB | おすすめ。精度と速さのバランスが良い |
+| large-v3-turbo | 1.5 GB | 量子化なし。わずかに高精度 |
+| small | 466 MB | 軽量・高速。非力な PC 向け |
+
+`<ドキュメント>\MeetingRecorder\config.json` で上書きできる（初回に自動作成。`null` は「同梱 / ダウンロード済みのものを使う」）：
 
 ```json
 {
-  "whisper_cli": "C:\\tools\\whisper\\whisper-cli.exe",
-  "model": "C:\\Users\\you\\Documents\\MeetingRecorder\\models\\ggml-large-v3-turbo.bin",
+  "whisper_cli": null,
+  "model": null,
   "language": "ja",
   "threads": 0
 }
 ```
 
-`whisper_cli` はファイル名だけなら PATH から探す。`threads: 0` は論理 CPU 数。
-設定ファイルは文字起こしのたびに読み直すので、失敗したら直して「再実行」を押せばよい。
+- `whisper_cli`：自分でビルドした whisper-cli などを使う場合にフルパスを指定する。
+- `model`：手元のモデルを使う場合にフルパスを指定する。指定したファイルが見つからない状態でモデルをダウンロードすると、自動で `null` に戻る。
+- `threads: 0` は論理 CPU 数。
+- 設定ファイルは文字起こしのたびに読み直すので、失敗したら直して「再実行」を押せばよい。
 
 GUI なしで確認する場合：
 
@@ -128,6 +148,19 @@ npm run tauri dev       # 開発
 npm run tauri build     # インストーラ (NSIS) 作成
 ```
 
+### 別の PC で使う
+
+```powershell
+npm run tauri build
+```
+
+`target\release\bundle\nsis\Meeting Recorder_0.1.0_x64-setup.exe` を別 PC にコピーしてインストールする。
+whisper-cli は同梱済みなので、初回起動時に画面からモデルをダウンロードするだけで文字起こしまで使える。
+（別 PC 側に Rust / Node.js は不要。WebView2 は Windows 10/11 に標準で入っている）
+
+補足：`src-tauri/whisper/` がないと Tauri のビルド（`cargo check` 含む）が失敗する。`npm run tauri ...` 経由なら自動で取得されるが、
+`cargo` を直接使う場合は先に `npm run fetch-whisper` を実行する。
+
 ## フロントエンドとのインターフェース
 
 | 種類 | 名前 | 内容 |
@@ -140,6 +173,9 @@ npm run tauri build     # インストーラ (NSIS) 作成
 | command | `get_meeting` | 会議情報と全文 (transcript.json) |
 | command | `open_folder` | 会議フォルダをエクスプローラーで開く |
 | command | `get_paths` | 保存先・設定ファイルのパス |
+| command | `get_setup` | whisper-cli とモデルの有無、選べるモデル一覧 |
+| command | `start_model_download` / `cancel_model_download` | モデルのダウンロード開始 / 中止 |
+| event | `model-download` | ダウンロードの進捗と結果。`state` = `running` / `done` / `cancelled` / `failed` |
 | event | `recording-progress` | 100 ms ごと。`elapsed_ms`, `mic_level`, `system_level`（直近のピーク 0〜1）, `errors` |
 | event | `transcription-status` | 文字起こしの状態変化。`status.state` = `queued` / `transcribing`(+`progress`) / `done` / `failed`(+`error`) |
 

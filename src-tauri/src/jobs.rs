@@ -9,7 +9,7 @@ use std::thread;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
-use transcriber::WhisperConfig;
+use transcriber::{Environment, WhisperConfig};
 
 pub const STATUS_EVENT: &str = "transcription-status";
 
@@ -43,7 +43,7 @@ pub struct Jobs {
 
 impl Jobs {
     /// Start the worker thread. `config_path` is re-read for every job so edits apply on retry.
-    pub fn start(app: AppHandle, config_path: PathBuf, model_dir: PathBuf) -> Self {
+    pub fn start(app: AppHandle, config_path: PathBuf, env: Environment) -> Self {
         let (queue, rx) = mpsc::channel::<PathBuf>();
         let meetings: Arc<Mutex<HashMap<PathBuf, MeetingInfo>>> = Arc::default();
         let jobs = Self {
@@ -58,19 +58,21 @@ impl Jobs {
                 for dir in rx {
                     worker.set_status(&app, &dir, JobStatus::Transcribing { progress: 0 });
                     let run = || {
-                        WhisperConfig::load_or_create(&config_path, &model_dir).and_then(|config| {
-                            let mut last = 0;
-                            transcriber::transcribe_meeting(&dir, &config, &mut |p| {
-                                if p != last {
-                                    last = p;
-                                    worker.set_status(
-                                        &app,
-                                        &dir,
-                                        JobStatus::Transcribing { progress: p },
-                                    );
-                                }
+                        WhisperConfig::load_or_create(&config_path)
+                            .and_then(|config| config.resolve(&env))
+                            .and_then(|config| {
+                                let mut last = 0;
+                                transcriber::transcribe_meeting(&dir, &config, &mut |p| {
+                                    if p != last {
+                                        last = p;
+                                        worker.set_status(
+                                            &app,
+                                            &dir,
+                                            JobStatus::Transcribing { progress: p },
+                                        );
+                                    }
+                                })
                             })
-                        })
                     };
                     // A panic must not kill the worker, or every later job would stay queued.
                     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run))

@@ -9,3 +9,6 @@ anyhow = "1"
 hound = "3.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha1 = "0.11"
+# Native TLS: SChannel on Windows (OS certificate store, no C toolchain needed to build).
+ureq = { version = "3", default-features = false, features = ["native-tls-no-default"] }

@@ -6,6 +6,7 @@
 //! The result is saved as `transcript.json` in the meeting folder.
 
 pub mod config;
+pub mod models;
 pub mod transcript;
 pub mod whisper;
 
@@ -13,7 +14,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
-pub use config::WhisperConfig;
+pub use config::{Environment, Whisper, WhisperConfig};
 pub use transcript::{Line, Speaker, Transcript};
 
 /// Progress callback: overall percentage 0-100.
@@ -22,12 +23,7 @@ pub type Progress<'a> = &'a mut dyn FnMut(u32);
 const TRACKS: [(&str, Speaker); 2] = [("mic", Speaker::Me), ("system", Speaker::Them)];
 
 /// Transcribe `dir/mic.wav` and `dir/system.wav`, write `dir/transcript.json` and return it.
-pub fn transcribe_meeting(
-    dir: &Path,
-    config: &WhisperConfig,
-    progress: Progress,
-) -> Result<Transcript> {
-    config.validate()?;
+pub fn transcribe_meeting(dir: &Path, config: &Whisper, progress: Progress) -> Result<Transcript> {
     let mut tracks = Vec::new();
     for (i, (name, speaker)) in TRACKS.into_iter().enumerate() {
         let base = i as u32 * 100 / TRACKS.len() as u32;
