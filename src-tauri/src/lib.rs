@@ -76,6 +76,12 @@ impl Paths {
         transcriber::Environment {
             bundled_cli: self.bundled_cli.clone(),
             gpu_cli: transcriber::gpu::CUDA_PACK.installed_cli(&self.runtime),
+            // Shipped next to the bundled whisper-cli by scripts/fetch-whisper.mjs.
+            vad_model: self
+                .bundled_cli
+                .as_ref()
+                .and_then(|cli| cli.parent())
+                .map(|dir| dir.join("ggml-silero-v6.2.0.bin")),
             models_dir: self.models.clone(),
         }
     }

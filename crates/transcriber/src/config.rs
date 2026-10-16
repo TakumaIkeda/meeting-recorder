@@ -25,6 +25,12 @@ pub struct WhisperConfig {
     pub threads: usize,
     /// Use the GPU (CUDA) build when it has been downloaded. `false` forces the CPU build.
     pub use_gpu: bool,
+    /// Voice activity detection: only transcribe stretches with speech. Prevents whisper from
+    /// hallucinating (「ご視聴ありがとうございました」, repeated phrases) during silence.
+    pub vad: bool,
+    /// Tokens of previous text fed back as context (whisper-cli `-mc`). 0 stops repetition loops
+    /// from carrying over between segments; -1 is whisper's default (full context).
+    pub max_context: i32,
 }
 
 impl Default for WhisperConfig {
@@ -35,6 +41,8 @@ impl Default for WhisperConfig {
             language: "ja".into(),
             threads: 0,
             use_gpu: true,
+            vad: true,
+            max_context: 0,
         }
     }
 }
@@ -46,6 +54,8 @@ pub struct Environment {
     pub bundled_cli: Option<PathBuf>,
     /// whisper-cli of the downloaded GPU (CUDA) build, if installed.
     pub gpu_cli: Option<PathBuf>,
+    /// Silero VAD model shipped with the app, if any.
+    pub vad_model: Option<PathBuf>,
     /// Folder that downloaded models are saved to.
     pub models_dir: PathBuf,
 }
@@ -59,6 +69,9 @@ pub struct Whisper {
     pub model: PathBuf,
     pub language: String,
     pub threads: usize,
+    /// VAD model to pass with `--vad`; `None` disables VAD.
+    pub vad_model: Option<PathBuf>,
+    pub max_context: i32,
 }
 
 fn cli_name() -> &'static str {
@@ -160,6 +173,8 @@ impl WhisperConfig {
             model,
             language: self.language.clone(),
             threads: self.threads(),
+            vad_model: env.vad_model.clone().filter(|p| self.vad && p.is_file()),
+            max_context: self.max_context,
         })
     }
 }
@@ -177,6 +192,7 @@ mod tests {
         Environment {
             bundled_cli: Some(cli),
             gpu_cli: None,
+            vad_model: None,
             models_dir: dir.join("models"),
         }
     }

@@ -55,19 +55,90 @@ fn is_non_speech(text: &str) -> bool {
         .any(|&(open, close)| t.starts_with(open) && t.ends_with(close) && t.chars().count() >= 2)
 }
 
+/// Phrases whisper is known to invent on silence (learned from video subtitles). A segment that
+/// consists of only one of these is dropped.
+const HALLUCINATIONS: &[&str] = &[
+    "ご視聴ありがとうございました",
+    "最後までご視聴いただきありがとうございました",
+    "チャンネル登録よろしくお願いします",
+    "チャンネル登録お願いします",
+];
+
+/// Text without whitespace and punctuation, for comparisons.
+fn normalize(text: &str) -> String {
+    text.chars()
+        .filter(|c| !c.is_whitespace() && !"。、．，.,!?！？・…ー〜~「」『』\"'".contains(*c))
+        .collect()
+}
+
+fn is_hallucination(text: &str) -> bool {
+    let t = normalize(text);
+    HALLUCINATIONS.iter().any(|h| t == normalize(h))
+}
+
+/// Minimum consecutive repetitions of a phrase inside one segment to treat it as a loop.
+const LOOP_MIN_REPEATS: usize = 4;
+const LOOP_MAX_PHRASE_CHARS: usize = 30;
+
+/// Collapse whisper's repetition loops inside a segment, e.g.
+/// 「そうですね。そうですね。そうですね。そうですね。」 → 「そうですね。」
+fn collapse_loops(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    'outer: while i < chars.len() {
+        for len in 1..=LOOP_MAX_PHRASE_CHARS.min((chars.len() - i) / LOOP_MIN_REPEATS) {
+            let phrase = &chars[i..i + len];
+            let mut repeats = 1;
+            while i + (repeats + 1) * len <= chars.len()
+                && &chars[i + repeats * len..i + (repeats + 1) * len] == phrase
+            {
+                repeats += 1;
+            }
+            if repeats >= LOOP_MIN_REPEATS {
+                out.extend(phrase);
+                i += repeats * len;
+                continue 'outer;
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
+/// Clean one track's segments: drop non-speech markers and known hallucinations, collapse
+/// loops, and drop a segment that just repeats the previous one.
+fn clean_track(segs: Vec<Segment>) -> Vec<Segment> {
+    let mut out: Vec<Segment> = Vec::with_capacity(segs.len());
+    for mut s in segs {
+        s.text = collapse_loops(s.text.trim());
+        if is_non_speech(&s.text) || is_hallucination(&s.text) {
+            continue;
+        }
+        if out
+            .last()
+            .is_some_and(|prev| normalize(&prev.text) == normalize(&s.text))
+        {
+            continue;
+        }
+        out.push(s);
+    }
+    out
+}
+
 impl Transcript {
     pub fn merge(tracks: Vec<(Speaker, Vec<Segment>)>) -> Self {
         let mut all: Vec<Line> = tracks
             .into_iter()
             .flat_map(|(speaker, segs)| {
-                segs.into_iter().map(move |s| Line {
+                clean_track(segs).into_iter().map(move |s| Line {
                     start_ms: s.start_ms,
                     end_ms: s.end_ms.max(s.start_ms),
                     speaker,
                     text: s.text,
                 })
             })
-            .filter(|l| !is_non_speech(&l.text))
             .collect();
         // Stable sort keeps whisper's order within a track for equal start times.
         all.sort_by_key(|l| l.start_ms);
@@ -180,6 +251,56 @@ mod tests {
         )]);
         assert_eq!(t.lines.len(), 1);
         assert_eq!(t.lines[0].text, "(笑)ありがとう");
+    }
+
+    #[test]
+    fn collapses_repetition_loops() {
+        assert_eq!(
+            collapse_loops("そうですね。そうですね。そうですね。そうですね。"),
+            "そうですね。"
+        );
+        assert_eq!(
+            collapse_loops("はい、ありがとうありがとうありがとうありがとうございます"),
+            "はい、ありがとうございます"
+        );
+        assert_eq!(collapse_loops("ーーーーーー"), "ー");
+        // Ordinary text and short natural repetition stay as they are.
+        assert_eq!(
+            collapse_loops("はいはいはい、了解です。"),
+            "はいはいはい、了解です。"
+        );
+        assert_eq!(
+            collapse_loops("木曜までには終わらせます。"),
+            "木曜までには終わらせます。"
+        );
+    }
+
+    #[test]
+    fn drops_hallucinations_and_repeated_segments() {
+        let t = Transcript::merge(vec![(
+            Speaker::Me,
+            vec![
+                seg(0, 1_000, "検証環境ですが"),
+                seg(5_000, 6_000, "ご視聴ありがとうございました。"),
+                seg(8_000, 9_000, "了解です。"),
+                seg(11_000, 12_000, "了解です"),
+                seg(14_000, 15_000, "了解です。"),
+                seg(
+                    30_000,
+                    31_000,
+                    "では、ご視聴ありがとうございましたと言って締めます",
+                ),
+            ],
+        )]);
+        let texts: Vec<_> = t.lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "検証環境ですが",
+                "了解です。",
+                "では、ご視聴ありがとうございましたと言って締めます"
+            ]
+        );
     }
 
     #[test]

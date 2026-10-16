@@ -15,7 +15,8 @@ fn write_wav(path: &Path, amplitude: i16) {
         sample_format: hound::SampleFormat::Int,
     };
     let mut w = hound::WavWriter::create(path, spec).unwrap();
-    for i in 0..16_000 {
+    // 3 s, so the fake segments (1-2 s) have audio under them.
+    for i in 0..48_000 {
         w.write_sample(if i % 2 == 0 { amplitude } else { -amplitude })
             .unwrap();
     }
@@ -55,6 +56,8 @@ fn transcribes_both_tracks_and_skips_silent_ones() {
         model: model.clone(),
         language: "ja".into(),
         threads: 2,
+        vad_model: None,
+        max_context: 0,
     };
 
     write_wav(&dir.join("mic.wav"), 3000);
@@ -102,5 +105,62 @@ fn transcribes_both_tracks_and_skips_silent_ones() {
     );
     assert!(err.contains("whisper-cli が見つかりません"), "{err}");
 
+    fs::remove_dir_all(&root).unwrap();
+}
+
+/// Records its arguments; rejects --vad like a whisper-cli that predates VAD support.
+const OLD_CLI: &str = r#"#!/bin/sh
+echo "$@" >> "$(pwd)/args.log"
+for a in "$@"; do
+  if [ "$a" = "--vad" ]; then echo "error: unknown argument: --vad" >&2; exit 1; fi
+done
+while [ $# -gt 0 ]; do
+  if [ "$1" = "-of" ]; then out="$2"; fi
+  shift
+done
+cat > "$out.json" <<JSON
+{"transcription": [{"offsets": {"from": 1000, "to": 2000}, "text": " $out"}]}
+JSON
+"#;
+
+#[test]
+fn passes_vad_flags_and_retries_without_them_on_old_cli() {
+    let root = std::env::temp_dir().join(format!("fake-whisper-vad-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let dir = root.join("2026-10-16_1000");
+    fs::create_dir_all(&dir).unwrap();
+    let cli = root.join("whisper-cli");
+    fs::write(&cli, OLD_CLI).unwrap();
+    fs::set_permissions(&cli, fs::Permissions::from_mode(0o755)).unwrap();
+    let vad = root.join("ggml-silero.bin");
+    fs::write(&vad, b"").unwrap();
+    write_wav(&dir.join("mic.wav"), 3000);
+    write_wav(&dir.join("system.wav"), 0);
+
+    let config = Whisper {
+        cli,
+        fallback_cli: None,
+        model: root.join("model.bin"),
+        language: "ja".into(),
+        threads: 2,
+        vad_model: Some(vad.clone()),
+        max_context: 0,
+    };
+    let t = transcribe_meeting(&dir, &config, &mut |_| {}).unwrap();
+    assert_eq!(t.lines.len(), 1);
+
+    let args = fs::read_to_string(dir.join("args.log")).unwrap();
+    let runs: Vec<&str> = args.lines().collect();
+    assert_eq!(runs.len(), 2, "{args}");
+    assert!(
+        runs[0].contains("-mc 0") && runs[0].contains(&format!("--vad -vm {}", vad.display())),
+        "{}",
+        runs[0]
+    );
+    assert!(
+        !runs[1].contains("--vad") && !runs[1].contains("-mc"),
+        "{}",
+        runs[1]
+    );
     fs::remove_dir_all(&root).unwrap();
 }

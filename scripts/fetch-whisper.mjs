@@ -17,22 +17,35 @@ const VERSION = "v1.9.2";
 const URL = `https://github.com/ggml-org/whisper.cpp/releases/download/${VERSION}/whisper-bin-x64.zip`;
 const SHA256 = "49dcc16de826f20bd53d44f947a1ae49dfa81f86cad67a64d80820cb192d674a";
 const VC_RUNTIME = ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcomp140.dll"];
+// Silero VAD model (MIT) from the same whisper.cpp tag, so whisper only transcribes speech and
+// doesn't hallucinate on silence. Saved as VAD_FILE next to whisper-cli.
+const VAD_URL = `https://raw.githubusercontent.com/ggml-org/whisper.cpp/${VERSION}/models/for-tests-silero-v6.2.0-ggml.bin`;
+const VAD_SHA256 = "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987";
+const VAD_FILE = "ggml-silero-v6.2.0.bin";
+// Bump when the set of fetched files changes, so existing checkouts re-fetch.
+const STAMP = `${VERSION}+vad`;
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const dest = join(root, "src-tauri", "whisper");
 const stamp = join(dest, "VERSION");
 const force = process.argv.includes("--force");
 
-if (!force && existsSync(join(dest, "whisper-cli.exe")) && existsSync(stamp) && readFileSync(stamp, "utf8").trim() === VERSION) {
+if (!force && existsSync(join(dest, "whisper-cli.exe")) && existsSync(stamp) && readFileSync(stamp, "utf8").trim() === STAMP) {
   process.exit(0);
 }
 
-console.log(`whisper.cpp ${VERSION} を取得しています: ${URL}`);
-const res = await fetch(URL);
-if (!res.ok) throw new Error(`ダウンロードに失敗しました: HTTP ${res.status}`);
-const zip = Buffer.from(await res.arrayBuffer());
-const hash = createHash("sha256").update(zip).digest("hex");
-if (hash !== SHA256) throw new Error(`SHA256 が一致しません: ${hash}（期待値 ${SHA256}）`);
+async function download(url, sha256) {
+  console.log(`取得しています: ${url}`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`ダウンロードに失敗しました: HTTP ${res.status} ${url}`);
+  const data = Buffer.from(await res.arrayBuffer());
+  const hash = createHash("sha256").update(data).digest("hex");
+  if (hash !== sha256) throw new Error(`SHA256 が一致しません: ${hash}（期待値 ${sha256}）: ${url}`);
+  return data;
+}
+
+const zip = await download(URL, SHA256);
+const vad = await download(VAD_URL, VAD_SHA256);
 
 const work = mkdtempSync(join(tmpdir(), "whisper-"));
 try {
@@ -48,6 +61,7 @@ try {
   const wanted = (f) => f === "whisper-cli.exe" || f === "whisper.dll" || (f.startsWith("ggml") && f.endsWith(".dll"));
   const files = readdirSync(src).filter(wanted);
   for (const f of files) copyFileSync(join(src, f), join(dest, f));
+  writeFileSync(join(dest, VAD_FILE), vad);
 
   if (process.platform === "win32") {
     const system32 = join(process.env.SystemRoot ?? "C:\\Windows", "System32");
@@ -62,7 +76,7 @@ try {
         "実行する PC に Visual C++ 再頒布可能パッケージ (x64) が必要です。");
     }
   }
-  writeFileSync(stamp, VERSION + "\n");
+  writeFileSync(stamp, STAMP + "\n");
   console.log(`src-tauri/whisper/ に ${files.length} ファイルを配置しました`);
 } finally {
   rmSync(work, { recursive: true, force: true });
